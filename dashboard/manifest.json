@@ -1,0 +1,7 @@
+{
+  "name": "wingline",
+  "label": "Wingline",
+  "description": "Wingline — a human-side view of Hermes Kanban boards (Board and Factory views): what needs you, what is running, queued and done, and what each task cost. Read-only backend; actions go through Hermes' Kanban API.",
+  "version": "0.1.0",
+  "api": "plugin_api.py"
+}

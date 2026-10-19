@@ -1,0 +1,112 @@
+{
+  "board": "edge-board",
+  "boards": [
+    {"slug": "default", "name": "Default"},
+    {"slug": "edge-board", "name": "Edge Board"}
+  ],
+  "now": 1792450000.0,
+  "tasks": [
+    {
+      "id": "t_parent01",
+      "title": "edge T1 build: the parent with two children",
+      "status": "done",
+      "assignee": "default",
+      "role": "builder",
+      "created_at": 1792440000, "started_at": 1792440030, "completed_at": 1792443600,
+      "max_runtime_seconds": 3600, "max_retries": 1, "consecutive_failures": 0,
+      "block_kind": null, "block_reason_plain": null, "error_raw": null, "error_plain": "",
+      "parents": [], "children": ["t_running1", "t_queued01"],
+      "runs": [
+        {"id": 1, "profile": "default", "status": "done", "outcome": "completed",
+         "started_at": 1792440030, "ended_at": 1792443600, "max_runtime_seconds": 3600,
+         "error_plain": "", "summary": "Built C:/Users/someone/source/repos/a-very-long-repository-name/with/a/deeply/nested/path/that/never/breaks/anywhere/plugin_api_selftest_fixture_file_name.py"}
+      ],
+      "cost": {"usd": 4.25, "status": "estimated", "sessions": 2},
+      "activity": null,
+      "comments": 1
+    },
+    {
+      "id": "t_running1",
+      "title": "edge T1 code review",
+      "status": "running",
+      "assignee": "default",
+      "role": "review",
+      "created_at": 1792440001, "started_at": 1792449000, "completed_at": null,
+      "max_runtime_seconds": 1800, "max_retries": 1, "consecutive_failures": 0,
+      "block_kind": null, "block_reason_plain": null, "error_raw": null, "error_plain": "",
+      "parents": ["t_parent01"], "children": [],
+      "runs": [
+        {"id": 2, "profile": "default", "status": "running", "outcome": null,
+         "started_at": 1792449000, "ended_at": null, "max_runtime_seconds": 1800,
+         "error_plain": "", "summary": ""}
+      ],
+      "cost": {"usd": 0.61, "status": "mixed", "sessions": 2},
+      "activity": {"text": "terminal command running (42s elapsed)", "at": 1792449990.5},
+      "comments": 0
+    },
+    {
+      "id": "t_queued01",
+      "title": "edge T2: queued behind its parent",
+      "status": "todo",
+      "assignee": "default",
+      "role": "builder",
+      "created_at": 1792440002, "started_at": null, "completed_at": null,
+      "max_runtime_seconds": null, "max_retries": null, "consecutive_failures": 0,
+      "block_kind": null, "block_reason_plain": null, "error_raw": null, "error_plain": "",
+      "parents": ["t_parent01"], "children": [],
+      "runs": [],
+      "cost": {"usd": 0.0, "status": "none", "sessions": 0},
+      "activity": null,
+      "comments": 0
+    },
+    {
+      "id": "t_blocked1",
+      "title": "edge flake: <script>alert('x')</script> root cause",
+      "status": "blocked",
+      "assignee": "default",
+      "role": "detective",
+      "created_at": 1792430000, "started_at": 1792430060, "completed_at": null,
+      "max_runtime_seconds": 5400, "max_retries": 1, "consecutive_failures": 1,
+      "block_kind": null,
+      "block_reason_plain": "Stopped by the time limit after 1h 30m; retries used 1/1",
+      "error_raw": "elapsed 5400s > limit 5400s \\x1b[38;2;63;168;102m const React\\x1b[0m",
+      "error_plain": "elapsed 5400s > limit 5400s const React",
+      "parents": [], "children": [],
+      "runs": [
+        {"id": 3, "profile": "default", "status": "timed_out", "outcome": "timed_out",
+         "started_at": 1792430060, "ended_at": 1792435460, "max_runtime_seconds": 5400,
+         "error_plain": "elapsed 5400s > limit 5400s", "summary": ""}
+      ],
+      "cost": {"usd": 2.5, "status": "actual", "sessions": 1},
+      "activity": null,
+      "comments": 2
+    },
+    {
+      "id": "t_archived",
+      "title": "<img src=x onerror=alert(1)>",
+      "status": "archived",
+      "assignee": "default",
+      "role": "builder",
+      "created_at": 1792420000, "started_at": 1792420030, "completed_at": null,
+      "max_runtime_seconds": 600, "max_retries": 1, "consecutive_failures": 1,
+      "block_kind": null,
+      "block_reason_plain": "pid 7496 exited with code 1 Worker's last output: 'Initializing agent... Error: Unknown skill(s): x'",
+      "error_raw": "pid 7496 exited with code 1 Worker's last output: '\\x1b[2;3mInitializing agent...\\x1b[0m Error: Unknown skill(s): x'",
+      "error_plain": "pid 7496 exited with code 1 Worker's last output: 'Initializing agent... Error: Unknown skill(s): x'",
+      "parents": [], "children": [],
+      "runs": [
+        {"id": 4, "profile": "default", "status": "crashed", "outcome": "crashed",
+         "started_at": 1792420030, "ended_at": 1792420090, "max_runtime_seconds": 600,
+         "error_plain": "pid 7496 exited with code 1 Worker's last output: 'Initializing agent... Error: Unknown skill(s): x'",
+         "summary": ""}
+      ],
+      "cost": {"usd": 1.2, "status": "estimated", "sessions": 1},
+      "activity": null,
+      "comments": 0
+    }
+  ],
+  "totals": {"needs_you": 1, "working": 1, "queued": 1, "done": 1, "spend_usd": 8.56},
+  "errors": [
+    {"source": "profiles/broken/state.db", "message": "DatabaseError: file is not a database"}
+  ]
+}
