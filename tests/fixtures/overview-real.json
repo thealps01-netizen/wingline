@@ -3,38 +3,54 @@
  "boards": [
   {
    "slug": "default",
-   "name": "Default"
+   "name": "Default",
+   "tasks": 0,
+   "last_activity": null
   },
   {
    "slug": "hermes-approvals-ui",
-   "name": "Hermes Approvals Ui"
+   "name": "Hermes Approvals Ui",
+   "tasks": 17,
+   "last_activity": 1792438796
   },
   {
    "slug": "hermes-wiki-automation",
-   "name": "Hermes Wiki Automation"
+   "name": "Hermes Wiki Automation",
+   "tasks": 6,
+   "last_activity": 1792272499
   },
   {
    "slug": "sap-systems",
-   "name": "Sap Systems"
+   "name": "Sap Systems",
+   "tasks": 12,
+   "last_activity": 1792451335
   },
   {
    "slug": "starlights-pilot",
-   "name": "Starlights Pilot"
+   "name": "Starlights Pilot",
+   "tasks": 6,
+   "last_activity": 1792190549
   },
   {
    "slug": "subagent-watch",
-   "name": "Subagent Watch"
+   "name": "Subagent Watch",
+   "tasks": 12,
+   "last_activity": 1792238865
   },
   {
    "slug": "wiki-recall",
-   "name": "Wiki Recall"
+   "name": "Wiki Recall",
+   "tasks": 6,
+   "last_activity": 1792403055
   },
   {
    "slug": "you-should-know",
-   "name": "You Should Know"
+   "name": "You Should Know",
+   "tasks": 59,
+   "last_activity": 1792360011
   }
  ],
- "now": 1792449825.7001848,
+ "now": 1792479729.4014516,
  "tasks": [
   {
    "id": "t_242d9908",
@@ -732,7 +748,7 @@
    "max_retries": 1,
    "consecutive_failures": 1,
    "block_kind": null,
-   "block_reason_plain": "pid 7496 exited with code 1 Worker's last output: 'Initializing agent... Error: Unknown skill(s): superpowers:systematic-debugging'",
+   "block_reason_plain": "Ended as crashed after 1m 1s (Unknown skill(s): superpowers:systematic-debugging); retries used 1/1",
    "error_raw": "pid 7496 exited with code 1 Worker's last output: '\\x1b[2;3mInitializing agent...\\x1b[0m Error: Unknown skill(s): superpowers:systematic-debugging'",
    "error_plain": "pid 7496 exited with code 1 Worker's last output: 'Initializing agent... Error: Unknown skill(s): superpowers:systematic-debugging'",
    "parents": [],

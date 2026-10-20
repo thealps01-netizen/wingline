@@ -35,6 +35,9 @@ _ANSI = [
 ]
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 _QUEUED = ("todo", "ready", "triage")
+_REASON_MAX = 160
+_DUMP = re.compile(r"worker's last output", re.I)
+_DUMP_ERROR = re.compile(r"\b(?:Error|Exception):\s*(.+?)['\"]*\s*$")
 _SESSION_COLUMNS = ("id", "parent_session_id", "started_at", "estimated_cost_usd", "actual_cost_usd",
                     "cost_status", "last_activity_at", "last_activity_description")
 _LINKS: dict[str, tuple[tuple, dict[str, list[str]]]] = {}
@@ -43,6 +46,8 @@ _TEXT = {
     "time_limit": "Stopped by the time limit after {dur}; retries used {retries}",
     "past_limit": "Ran {dur}, past its {limit} time limit, then ended as {outcome}; retries used {retries}",
     "no_reason": "Blocked; no reason recorded",
+    "ended_as": "Ended as {outcome} after {dur}; retries used {retries}",
+    "ended_err": "Ended as {outcome} after {dur} ({error}); retries used {retries}",
     "retries_of": "{used}/{max}",
     "retries_board": "{used} (board limit)",
 }
@@ -168,25 +173,54 @@ def _resolve_board(board: Optional[str], errors: list) -> str:
     return DEFAULT_BOARD
 
 
-def _list_boards(errors: list) -> list[dict]:
+def _board_stats(slug: str, errors: list) -> tuple[int, Optional[float]]:
+    path = _board_db(slug)
+    if not path.is_file():
+        return 0, None
     try:
-        rows = _kanban_core().list_boards(include_archived=False)
-        return [{"slug": b.get("slug"), "name": b.get("name") or b.get("slug")} for b in rows]
+        with closing(_ro(path)) as conn:
+            count = conn.execute("select count(*) from tasks where status != 'archived'").fetchone()[0]
+            stamps = [conn.execute("select max(max(coalesce(created_at, 0), coalesce(started_at, 0), "
+                                   "coalesce(completed_at, 0))) from tasks").fetchone()[0]]
+            for sql in ("select max(max(coalesce(started_at, 0), coalesce(ended_at, 0))) from task_runs",
+                        "select max(created_at) from task_events"):
+                try:
+                    stamps.append(conn.execute(sql).fetchone()[0])
+                except sqlite3.Error:
+                    pass
+    except Exception as exc:
+        _err(errors, _label(path, _kanban_root()), exc)
+        return 0, None
+    found = [s for s in stamps if isinstance(s, (int, float)) and s > 0]
+    return int(count), (max(found) if found else None)
+
+
+def _list_boards(errors: list) -> list[dict]:
+    rows = None
+    try:
+        rows = [{"slug": b.get("slug"), "name": b.get("name") or b.get("slug")}
+                for b in _kanban_core().list_boards(include_archived=False)]
     except Exception as exc:
         log.debug("wingline: core list_boards unavailable (%s)", exc)
-    out = [{"slug": DEFAULT_BOARD, "name": "Default"}]
-    root = _kanban_root() / "kanban" / "boards"
-    try:
-        children = sorted(root.iterdir(), key=lambda p: p.name.lower()) if root.is_dir() else []
-    except OSError as exc:
-        _err(errors, "kanban/boards", exc)
-        return out
-    for child in children:
-        if child.name == DEFAULT_BOARD or not _SLUG.match(child.name) or not (child / "board.json").is_file():
-            continue
-        meta = _board_meta(child.name)
-        if not meta.get("archived"):
-            out.append({"slug": child.name, "name": meta.get("name") or child.name})
+    if rows is None:
+        rows = [{"slug": DEFAULT_BOARD, "name": "Default"}]
+        root = _kanban_root() / "kanban" / "boards"
+        try:
+            children = sorted(root.iterdir(), key=lambda p: p.name.lower()) if root.is_dir() else []
+        except OSError as exc:
+            _err(errors, "kanban/boards", exc)
+            children = []
+        for child in children:
+            if child.name == DEFAULT_BOARD or not _SLUG.match(child.name) or not (child / "board.json").is_file():
+                continue
+            meta = _board_meta(child.name)
+            if not meta.get("archived"):
+                rows.append({"slug": child.name, "name": meta.get("name") or child.name})
+    out = []
+    for row in rows:
+        slug = row["slug"]
+        tasks, last = _board_stats(slug, errors)
+        out.append({"slug": slug, "name": row["name"], "tasks": tasks, "last_activity": last})
     return out
 
 
@@ -245,7 +279,7 @@ def duration(seconds) -> str:
     if total < 60:
         return f"{total}s"
     if total < 3600:
-        return f"{total // 60}m"
+        return f"{total // 60}m {total % 60}s"
     return f"{total // 3600}h {total % 3600 // 60}m"
 
 
@@ -259,6 +293,10 @@ def _retries(task: dict) -> str:
     return _tx("retries_of", used=used, max=limit) if limit is not None else _tx("retries_board", used=used)
 
 
+def _cap(text: str) -> str:
+    return text if len(text) <= _REASON_MAX else text[:_REASON_MAX - 1].rstrip() + "\u2026"
+
+
 def block_reason(task: dict, runs: list[dict], event: Optional[dict]) -> Optional[str]:
     error = task.get("last_failure_error")
     if task.get("status") != "blocked" and not error:
@@ -266,8 +304,9 @@ def block_reason(task: dict, runs: list[dict], event: Optional[dict]) -> Optiona
     if task.get("status") == "blocked" and event and event.get("event") == "blocked":
         reason = plain(event.get("reason"))
         if reason:
-            return reason
+            return _cap(reason)
     last = runs[-1] if runs else None
+    took = None
     if last:
         started, ended = _number(last.get("started_at")), _number(last.get("ended_at"))
         took = ended - started if started is not None and ended is not None else None
@@ -278,7 +317,13 @@ def block_reason(task: dict, runs: list[dict], event: Optional[dict]) -> Optiona
             return _tx("past_limit", dur=duration(took), limit=duration(limit),
                        outcome=str(last.get("outcome")), retries=_retries(task))
     line = _first_line(error) or _first_line(last.get("error") if last else None)
-    return line or _tx("no_reason")
+    if (len(line) > _REASON_MAX or _DUMP.search(line)) and last and last.get("outcome") and took is not None:
+        found = _DUMP_ERROR.search(line)
+        if found and len(found.group(1)) <= 80:
+            return _cap(_tx("ended_err", outcome=str(last.get("outcome")), dur=duration(took),
+                            error=found.group(1).strip(), retries=_retries(task)))
+        return _tx("ended_as", outcome=str(last.get("outcome")), dur=duration(took), retries=_retries(task))
+    return _cap(line) or _tx("no_reason")
 
 
 def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -519,6 +564,9 @@ def _selftest() -> int:
         bdir = home / "kanban" / "boards" / slug
         bdir.mkdir(parents=True)
         (bdir / "board.json").write_text(json.dumps({"slug": slug, "name": "Wing Test"}), encoding="utf-8")
+        named = home / "kanban" / "boards" / "named-board"
+        named.mkdir(parents=True)
+        (named / "board.json").write_text(json.dumps({"slug": "named-board", "name": "Approvals UI"}), encoding="utf-8")
         (home / "kanban" / "current").write_text(slug + "\n", encoding="utf-8")
         kdb = bdir / "kanban.db"
         try:
@@ -639,6 +687,12 @@ def _selftest() -> int:
         ok(data["board"] == slug, f"board omitted resolves to kanban/current: {data['board']}")
         ok(data["now"] == 1000.0, "now echoed")
         ok({b["slug"] for b in data["boards"]} >= {"default", slug}, f"boards listed: {data['boards']}")
+        bl = {b["slug"]: b for b in data["boards"]}
+        ok(bl[slug]["tasks"] == 9 and bl[slug]["last_activity"] == 18400,
+           f"board row counts non-archived tasks and the newest activity: {bl[slug]}")
+        ok(bl[slug]["name"] == "Wing Test", f"the board name is Hermes' stored name, as written: {bl[slug]}")
+        ok(bl["named-board"]["name"] == "Approvals UI" and bl["named-board"]["tasks"] == 0
+           and bl["named-board"]["last_activity"] is None, f"a chosen board name is shown as written: {bl['named-board']}")
         by = {t["id"]: t for t in data["tasks"]}
         ok(len(by) == 10, "every task returned, archived included")
         roles = {k: by[k]["role"] for k in by}
@@ -714,7 +768,22 @@ def _selftest() -> int:
         ok(empty["tasks"] == [] and empty["errors"] and empty["errors"][0]["source"] == "kanban.db",
            f"missing default board db reported: {empty['errors']}")
         ok(health() == {"ok": True, "version": VERSION}, "health")
-        ok(duration(59) == "59s" and duration(61) == "1m" and duration(18000) == "5h 0m", "duration format")
+        ok(duration(59) == "59s" and duration(61) == "1m 1s" and duration(74) == "1m 14s"
+           and duration(18000) == "5h 0m", "duration format: one style, seconds kept under an hour")
+        dump = "pid 1 not alive Worker's last output: " + "x" * 400
+        ok(block_reason({"status": "blocked", "last_failure_error": dump},
+                        [{"outcome": "crashed", "started_at": 0, "ended_at": 74}], None)
+           == "Ended as crashed after 1m 14s; retries used 0 (board limit)",
+           "a raw dump never becomes the reason; the recorded outcome does")
+        skill = "pid 7 exited with code 1 Worker's last output: 'Initializing agent... Error: Unknown skill(s): x:y'"
+        ok(block_reason({"status": "archived", "last_failure_error": skill},
+                        [{"outcome": "crashed", "started_at": 0, "ended_at": 61}], None)
+           == "Ended as crashed after 1m 1s (Unknown skill(s): x:y); retries used 0 (board limit)",
+           "a short worker dump keeps only the error it names")
+        capped = block_reason({"status": "blocked", "last_failure_error": dump}, [], None)
+        ok(len(capped) == _REASON_MAX and capped.endswith("\u2026"), f"a long first line is capped: {len(capped)}")
+        ok(len(block_reason({"status": "blocked"}, [], {"event": "blocked", "reason": "y " * 200})) == _REASON_MAX,
+           "a long block reason is capped")
         ok(json.loads(json.dumps(data)) == data, "JSON serialisable")
     finally:
         shutil.rmtree(home, ignore_errors=True)

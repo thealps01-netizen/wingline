@@ -23,7 +23,9 @@ reuse the core helper if importable, fail-open to `default`).
 ```jsonc
 {
   "board": "hermes-approvals-ui",
-  "boards": [{"slug": "...", "name": "..."}],
+  "boards": [{"slug": "...", "name": "...",   // name: Hermes' stored board name, shown as written
+              "tasks": 17,                    // non-archived tasks on that board
+              "last_activity": 1792438796}],  // newest task/run/event stamp, or null
   "now": 1792446113.1,                     // server epoch seconds
   "tasks": [{
     "id": "t_95000f55", "title": "...", "status": "blocked",   // raw Hermes status
@@ -58,8 +60,14 @@ Rules:
 - **needs_you** = status `blocked`. **working** = `running`. **queued** = `todo`/`ready`/`triage`.
   **done** = `done`. Archived tasks are returned (status `archived`) but excluded from totals except
   `spend_usd`, which sums every task's cost.
-- `block_reason_plain`: built from data, e.g. timed-out run (outcome/error mentions max runtime) →
-  "Stopped by the time limit after <dur>; retries used <n>/<max>". Unknown → error_plain first line.
+- `block_reason_plain`: one plain line built from data, never a raw dump, at most 160 characters:
+  timed-out run (outcome/error mentions max runtime) → "Stopped by the time limit after <dur>; retries
+  used <n>/<max>"; a run past its limit that ended otherwise → "Ran <dur>, past its <limit> time limit,
+  then ended as <outcome>; …"; a worker dump ("Worker's last output: …") or a first line over 160
+  characters → "Ended as <outcome> after <dur> (<the `Error:` it names, if short>); …"; else the
+  error's first line, capped. The raw text stays in `error_raw` / `error_plain`.
+- Durations use one format everywhere: `59s`, `1m 14s`, `5h 0m` (backend `duration()`, panel
+  `fmtDur()`).
 - `GET /api/plugins/wingline/health` → `{"ok": true, "version": "0.1.0"}`.
 - `python dashboard/plugin_api.py --selftest` builds a temp HERMES_HOME with a fake board +
   state.db (incl. an ANSI error, a `ui-polish-1140 build` title, a child session) and asserts
