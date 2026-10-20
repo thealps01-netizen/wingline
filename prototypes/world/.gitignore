@@ -10,3 +10,6 @@ frames/
 motion.json
 motion-phases.json
 measure.log
+checks.log
+lc-*.png
+ui-*.png

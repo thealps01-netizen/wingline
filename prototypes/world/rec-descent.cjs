@@ -9,7 +9,7 @@ setTimeout(() => { console.log('ERR watchdog'); app.exit(2) }, 1500000)
 app.whenReady().then(async () => {
   fs.rmSync(OUT, { recursive: true, force: true }); fs.mkdirSync(OUT)
   const w = new BrowserWindow({ show: false, width: 1180, height: 900, useContentSize: true, paintWhenInitiallyHidden: true, backgroundColor: '#0b0b0c', webPreferences: { backgroundThrottling: false } })
-  await w.loadURL(`http://127.0.0.1:${PORT}/planet.html?view=${process.env.VIEW || 'descent'}&rec=1&pr=${PR}&t=${Date.now()}`)
+  await w.loadURL(`http://127.0.0.1:${PORT}/planet.html?view=${process.env.VIEW || 'descent'}&rec=1${process.env.QS || ""}&pr=${PR}&t=${Date.now()}`)
   const ev = s => w.webContents.executeJavaScript(s)
   for (let i = 0; i < 240 && !(await ev('!!window.__ready || (window.__errs||[]).length>0')); i++) await new Promise(r => setTimeout(r, 500))
   const errs = await ev('JSON.stringify(window.__errs || [])'); if (errs !== '[]' || !(await ev('!!window.__ready'))) { console.log('ERR page', errs); app.exit(3); return }
