@@ -80,22 +80,39 @@ agent-station's `desktop/plugin.js` (read its `register(ctx)` and how it fetches
 Registers a `routes` page `/wingline` and a `sidebar.nav` row (no `panes`). One nested `en` i18n
 bundle, prefix `wingline.`.
 
-Polls `/overview` every 5 s while the page is visible (pause when hidden). Board switcher.
+Polls `/overview` every 5 s while the page is visible (pause when hidden). Board switcher: each
+option is Hermes' stored board `name`, as written, plus its task count ("Hermes Approvals Ui · 17
+tasks"). Board choice: the board the user last picked (`ctx.storage` key `board`); with no pick and
+an empty current board, the board with the newest `last_activity` opens (not stored as a pick).
 Header counters: Needs you / Working / Queued / Done / Spend. A **Board | Factory** segmented
-switch (persist choice in `ctx.storage`).
+switch (persist choice in `ctx.storage`). One duration format everywhere: `42s`, `1m 14s`, `5m`,
+`2h 5m`, `3h`.
 
 **Board** (port of the approved prototype `hub/template.html`):
-- "Needs you" strip first: each blocked task with plain reason, retries, time spent, actions.
-- Working now: live activity line per running task.
-- Pipeline map (parents → children) and timeline where only IDLE gaps are compressed
-  (`GAP` 6 min); run bars keep real length.
-- Task detail drawer: fields, runs, cost (with its status word), comments count, actions.
+Hierarchy: Needs you (strongest, yellow) → Working now (accent) → Pipeline → Timeline.
+- "Needs you" first: each blocked task with ONE plain line (`block_reason_plain`; never a worker
+  dump — a dump-looking fallback becomes "no reason on record"), retries, time worked, attempts,
+  cost, actions. The stored error text only behind a collapsed **Raw error** disclosure
+  (monospace, max height, scrolls).
+- Working now: live activity line per running task; with nothing running, one slim line.
+- Pipeline map: EVERY group (dependency chains, implement/review pairs of the same name, families
+  sharing a first word, then "Other tasks"), each task exactly once, no overlap.
+- Timeline grouped by the same pipelines, compact rows, bar min width, evenly placed ticks; only
+  IDLE gaps are compressed (`GAP` 6 min); run bars keep real length.
+- Task detail sheet: closed by default; opens on click as a side sheet over the page with a close
+  button (and Escape); its body scrolls while the header and the action footer stay visible. It
+  does not repeat the Needs-you reason; attempts show outcome + duration, raw text collapsed.
 
-**Factory** (port of `games/factory/template.html`): belts between machines (queue → build →
-review → gate → shipped), packages = tasks, jammed machine + smoke + red "Needs you" bin for blocked,
-Now + Replay (1×/4×/16×), click package/machine → same detail drawer. Colours from the app theme's
-`--ui-*` variables (agent-station shows which exist) — never the chat-widget `--foreground` etc.
-Respect `prefers-reduced-motion`.
+**Factory** (faithful port of `games/factory/template.html`, owner's decision): a self-contained
+game scene with the prototype's OWN light palette (`const INK`, `RC`, `RC_LIGHT` — the only colour
+literals allowed in plugin.js) and drawing: light floor with grid, smooth dark belts with soft
+depth, light 3D-ish machines with shadows (2 presses, 4 scanners, gate with gold disc, detective
+lab with magnifier and hazard stripe when jammed), crates on wood in the shipped bay, a Needs-you
+bin with a calm dashed dark border. No scene label under 11 px at 1440 wide; no network font (the
+app font is used: plugins cannot ship font files). The app theme's `--ui-*` variables only for the
+chrome around the scene (header, live pill, replay bar). Now + Replay (1×/4×/16×), click
+crate/machine → the same detail sheet. Stop wording follows the recorded run outcome (crashed vs
+timed_out). Respect `prefers-reduced-motion`.
 
 **Actions** — all via Hermes' Kanban REST (`/api/plugins/kanban/...`, `?board=<slug>`), each
 behind a confirm step that states exactly what will change:
@@ -110,7 +127,7 @@ behind a confirm step that states exactly what will change:
    `max_retries` is not accepted by `POST /tasks`; say the new task uses the board default.
 2. **Add note**: `POST /tasks/{id}/comments` `{body, author:"wingline"}`.
 3. **Archive**: two-step; says the task stays readable under archived and can be found again.
-4. Read-only: **Open log** (`GET /tasks/{id}/log`, shown in the drawer, ANSI stripped),
+4. Read-only: **Open log** (`GET /tasks/{id}/log`, shown in the detail sheet, ANSI stripped),
    **Open in Kanban** (navigate to `/kanban`), **Ask in chat** (prefill composer if the SDK offers
    it; otherwise copy a prompt to clipboard and say so).
 

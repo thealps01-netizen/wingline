@@ -112,3 +112,21 @@ snapshot while the blocked task was still accruing — unverified).
   are shared across profiles, so this reaches the same board data.
 - **Ask in chat** inserts into the focused chat's composer (`host.composer.insertText`); if that
   fails it copies the prompt and says so.
+- **The Factory keeps the prototype's own light palette** (owner's decision after v0.1.0, whose
+  theme-tinted dark scene was rejected). `const INK`, `RC`, `RC_LIGHT` hold the scene colours and
+  are the only colour literals `audit_static.py` accepts; the chrome around the scene still uses the
+  app's `--ui-*` variables.
+- **No bundled font.** Desktop plugins are read as one source text over IPC
+  (`hermes:readPluginSource`); there is no static-file door for a `.woff2`, and inlining a base64
+  font into plugin.js was judged not worth the size. The scene uses the app font; scene type is
+  sized so the smallest label is 11 px at 1440 wide (`FS`, checked in `render_check.mjs`).
+- **The detail sheet is measured, not guessed.** It is `position: fixed` and, when open, takes the
+  top/height/right of the nearest scrolling ancestor of the page, so it never covers the app's
+  title bar and its footer buttons stay on screen. Without a measurable ancestor it falls back to
+  the full window height.
+- **Board pick.** The user's last pick (`ctx.storage` `board`) wins. With no pick and an empty
+  current board (Hermes' `kanban/current` often points at `default`), the board with the newest
+  activity opens; that automatic jump is not stored, so it never overrides a later real pick.
+- **Pipeline groups**: dependency chains first, then same-name pairs (`deck T1: …` + `deck T1
+  review`, `… (retry)`), then families sharing a first word, then "Other tasks". The timeline uses
+  the same groups so a task sits under the same heading in both places.

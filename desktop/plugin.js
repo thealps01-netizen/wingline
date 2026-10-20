@@ -213,8 +213,8 @@ const BUNDLES = {
         clear: 'All clear — nothing waiting on you',
         queueEmpty: 'Queue empty',
         none: 'none',
-        crates: n => (n === 1 ? '1 crate' : `${n} crates`),
-        shipped: 'shipped',
+        crates: n => (n === 1 ? '1 crate shipped' : `${n} crates shipped`),
+        shipped: 'their cost',
         inputs: (a, b) => `${a}/${b} inputs`,
         callLimit: 'STOPPED · TIME LIMIT',
         callCrash: 'STOPPED · CRASHED',
@@ -563,7 +563,7 @@ const CAP = { intake: 10, dock: 42, bay: 4, scrap: 12 }
 const SCENE = { x: 14, y: 72, w: 1572, h: 812 }
 const RC = { builder: '#3d7dd8', review: '#8b6fd6', gate: '#e2a336', detective: '#2fa58e' }
 const RC_LIGHT = { builder: '#6d9de1', review: '#a893e0', gate: '#e9ba68', detective: '#63bcaa' }
-const FS = { zone: 17, name: 16, tag: 16, note: 16, num: 16, sign: 30 }
+const FS = { zone: 17, name: 16, tag: 16, note: 16, num: 16, sign: 28 }
 const ptsAttr = list => list.map(p => p.join(',')).join(' ')
 
 function archivedAt(task) {
