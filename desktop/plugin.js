@@ -30,6 +30,19 @@ const BUNDLES = {
       boardOpt: (name, n) => `${name} · ${n === 1 ? '1 task' : `${n} tasks`}`,
       raw: 'Raw error',
       view: { label: 'View', board: 'Board', factory: 'Factory' },
+      world: {
+        st: { done: 'Done', work: 'Working', fail: 'Needs you', wait: 'Waiting' },
+        boardChip: (st, n) => `${st} · ${n === 1 ? '1 task' : `${n} tasks`}`,
+        emptyChip: 'No tasks yet',
+        pipeChip: (st, n) => `${st} · ${n}`,
+        pipeDone: (st, d, n) => `${st} · ${d}/${n}`,
+        allNeed: n => `All boards · ${n === 1 ? '1 needs you' : `${n} need you`}`,
+        allClear: 'All boards · nothing needs you',
+        boardNeed: (name, n) => `${name} · ${n === 1 ? '1 needs you' : `${n} need you`}`,
+        boardsClear: (a, b) => `${a}/${b} boards clear`,
+        tasksDone: (a, b) => `${a}/${b} done`,
+        k: { boards: 'Boards', tasks: 'Tasks', spent: 'Spent', pipelines: 'Pipelines', runs: 'Runs', working: 'Working', needs: 'Needs you', waiting: 'Waiting', done: 'Done' }
+      },
       count: { needs: 'Needs you', working: 'Working', queued: 'Queued', done: 'Done', spend: 'Spend', filter: label => `Show only ${label} in the timeline` },
       updated: s => `Updated ${s}`,
       loading: 'Loading the board…',
@@ -488,6 +501,249 @@ function shortTitle(task, prefix) {
   const title = String(task?.title || '')
   if (!prefix || !title.startsWith(prefix) || title.length <= prefix.length + 1) return title
   return title.slice(prefix.length).replace(/^[\s:·—-]+/, '') || title
+}
+
+const WORLD_CAP = { boards: 12, pipelines: 12, builder: 3, review: 6, gate: 1, detective: 2 }
+const WORLD_RANK = { fail: 0, work: 1, wait: 2, done: 3 }
+const WORLD_CENTER = { lat: 10, lon: 0, radius: 46 }
+
+const worldState = status => (status === 'blocked' ? 'fail' : status === 'running' ? 'work' : status === 'done' ? 'done' : 'wait')
+const worstState = states => states.reduce((a, s) => (WORLD_RANK[s] < WORLD_RANK[a] ? s : a), 'done')
+
+function worldHash(s) {
+  let h = 0x811c9dc5
+  for (const ch of String(s)) {
+    h ^= ch.codePointAt(0)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h
+}
+
+function worldSlots(n) {
+  const m = n <= 48 ? 48 : n <= 96 ? 96 : 48 * 2 ** Math.ceil(Math.log2(n / 48))
+  const out = []
+  const { lat, lon, radius } = WORLD_CENTER
+  for (let i = 0; i < m; i++) {
+    const r = radius * Math.sqrt((i + 0.5) / m)
+    const a = i * 2.399963229728653
+    const la = lat + r * Math.cos(a)
+    out.push([+la.toFixed(2), +(lon + (r * Math.sin(a)) / Math.cos((la * Math.PI) / 180)).toFixed(2)])
+  }
+  return out
+}
+
+function placeBoards(slugs, keep) {
+  const slots = worldSlots(slugs.length)
+  const m = slots.length
+  const order = [...new Set(slugs)].map(s => ({ s, h: worldHash(s) })).sort((a, b) => a.h - b.h || (a.s < b.s ? -1 : 1))
+  const taken = new Set()
+  const at = new Map()
+  const rest = []
+  const kept = keep && keep.tier === m && keep.at && typeof keep.at === 'object' ? keep.at : {}
+  const fresh = []
+  for (const p of order) {
+    const k = kept[p.s]
+    if (Number.isInteger(k) && k >= 0 && k < m && !taken.has(k)) {
+      taken.add(k)
+      at.set(p.s, k)
+    } else fresh.push(p)
+  }
+  for (const p of fresh) {
+    const k = p.h % m
+    if (taken.has(k)) rest.push(p)
+    else {
+      taken.add(k)
+      at.set(p.s, k)
+    }
+  }
+  for (const p of rest) {
+    let k = p.h % m
+    while (taken.has(k)) k = (k + 1) % m
+    taken.add(k)
+    at.set(p.s, k)
+  }
+  return { where: new Map([...at].map(([s, k]) => [s, slots[k]])), spots: { tier: m, at: Object.fromEntries(at) } }
+}
+
+function stateWord(t, st) {
+  return st === 'fail'
+    ? t('wingline.world.st.fail')
+    : st === 'work'
+      ? t('wingline.world.st.work')
+      : st === 'wait'
+        ? t('wingline.world.st.wait')
+        : t('wingline.world.st.done')
+}
+
+function pipeChip(t, st, c, n) {
+  if (st === 'fail') return t('wingline.world.pipeChip', stateWord(t, st), c.fail)
+  if (st === 'work') return t('wingline.world.pipeChip', stateWord(t, st), c.work)
+  if (st === 'wait') return t('wingline.world.pipeChip', stateWord(t, st), c.wait)
+  return t('wingline.world.pipeDone', stateWord(t, st), c.done, n)
+}
+
+const two = n => String(n).padStart(2, '0')
+const countStates = states => {
+  const c = { fail: 0, work: 0, wait: 0, done: 0 }
+  for (const s of states) c[s]++
+  return c
+}
+const newest = list => list.reduce((a, x) => Math.max(a, x.completed_at || 0, x.started_at || 0, x.created_at || 0), 0)
+
+function worldKey(g) {
+  if (g.other) return 'other'
+  if (g.kind === 'chain') return `chain:${[...g.tasks.map(x => x.id)].sort()[0]}`
+  return `${g.kind}:${String(g.name).toLowerCase()}`
+}
+
+function worldUnits(tasks, prefix) {
+  const roles = { builder: [], review: [], gate: [], detective: [] }
+  for (const x of tasks) {
+    const st = worldState(x.status)
+    const r = lastRun(x)
+    roles[roleOf(x)].push({
+      id: x.id,
+      title: String(x.title || ''),
+      short: shortTitle(x, prefix),
+      st,
+      agent: st === 'work' ? { profile: r?.profile || x.assignee || null, activity: x.activity?.text || null } : null
+    })
+  }
+  const more = {}
+  for (const k of Object.keys(roles)) {
+    more[k] = Math.max(0, roles[k].length - WORLD_CAP[k])
+    roles[k] = roles[k].slice(0, WORLD_CAP[k])
+  }
+  return { roles, more }
+}
+
+function worldOf(data, t, keep) {
+  const tasks = Array.isArray(data?.tasks) ? data.tasks.filter(x => x && typeof x.id === 'string') : []
+  const rows = Array.isArray(data?.boards) ? data.boards.filter(b => b && typeof b.slug === 'string') : []
+  const current = typeof data?.board === 'string' ? data.board : rows[0]?.slug || null
+  const { where, spots } = placeBoards(rows.map(b => b.slug), keep)
+  const boards = rows.map(b => {
+    const n = isNum(b.tasks) ? b.tasks : 0
+    const c = { fail: b.needs_you || 0, work: b.working || 0, wait: b.queued || 0, done: b.done || 0 }
+    const st = c.fail ? 'fail' : c.work ? 'work' : c.wait ? 'wait' : 'done'
+    const [lat, lon] = where.get(b.slug)
+    return {
+      slug: b.slug,
+      name: String(b.name || b.slug),
+      n,
+      st,
+      empty: n === 0,
+      chip: n === 0 ? t('wingline.world.emptyChip') : t('wingline.world.boardChip', stateWord(t, st), n),
+      lat,
+      lon,
+      current: b.slug === current,
+      spend: isNum(b.spend_usd) ? b.spend_usd : 0,
+      counts: c,
+      last: isNum(b.last_activity) ? b.last_activity : 0
+    }
+  })
+  const pick = [...boards].sort((a, b) => b.current - a.current || WORLD_RANK[a.st] - WORLD_RANK[b.st] || a.empty - b.empty || b.last - a.last)
+  const labeled = new Set(pick.slice(0, WORLD_CAP.boards).map(b => b.slug))
+  for (const b of boards) b.labeled = labeled.has(b.slug)
+  const all = boards.reduce((s, b) => s + b.n, 0)
+  const need = boards.filter(b => b.counts.fail).length
+  const clear = boards.filter(b => b.st === 'done').length
+  const sum = k => boards.reduce((s, b) => s + b.counts[k], 0)
+  const planet = {
+    tab: need ? t('wingline.world.allNeed', need) : t('wingline.world.allClear'),
+    tabTone: need ? 'fail' : 'work',
+    ticks: { label: t('wingline.world.boardsClear', clear, boards.length), list: boards.map(b => b.st) },
+    tl: [
+      [t('wingline.world.k.boards'), String(boards.length)],
+      [t('wingline.world.k.tasks'), String(all)],
+      [t('wingline.world.k.spent'), money(boards.reduce((s, b) => s + b.spend, 0))]
+    ],
+    tr: [
+      [t('wingline.world.k.working'), two(sum('work'))],
+      [t('wingline.world.k.needs'), two(sum('fail'))],
+      [t('wingline.world.k.done'), two(sum('done'))]
+    ],
+    more: Math.max(0, boards.length - labeled.size)
+  }
+  const pipes = []
+  let hidden = 0
+  for (const g of groupsOf(tasks, t)) {
+    const live = g.tasks.filter(x => x.status !== 'archived')
+    if (!live.length) {
+      hidden++
+      continue
+    }
+    const states = live.map(x => worldState(x.status))
+    const st = worstState(states)
+    const c = countStates(states)
+    const usd = g.tasks.reduce((s, x) => s + (isNum(x.cost?.usd) ? x.cost.usd : 0), 0)
+    const key = worldKey(g)
+    pipes.push({
+      key,
+      seed: worldHash(key),
+      name: g.name,
+      kind: g.kind,
+      usd: +usd.toFixed(6),
+      place: usd < 4 ? 'farm' : usd <= 10 ? 'village' : 'harbor',
+      st,
+      counts: c,
+      n: live.length,
+      runs: live.reduce((s, x) => s + runsOf(x).length, 0),
+      chip: pipeChip(t, st, c, live.length),
+      last: newest(live),
+      ticks: live.map(x => worldState(x.status)),
+      ...worldUnits(live, g.other ? '' : g.name)
+    })
+  }
+  pipes.sort((a, b) => WORLD_RANK[a.st] - WORLD_RANK[b.st] || b.last - a.last || (a.key < b.key ? -1 : 1))
+  const shown = pipes.slice(0, WORLD_CAP.pipelines)
+  const here = boards.find(b => b.current)
+  const open = tasks.filter(x => x.status !== 'archived')
+  const openStates = open.map(x => worldState(x.status))
+  const oc = countStates(openStates)
+  const region = here
+    ? {
+        slug: here.slug,
+        name: here.name,
+        pipelines: shown,
+        more: pipes.length - shown.length,
+        archivedOnly: hidden,
+        chrome: {
+          tab: oc.fail ? t('wingline.world.boardNeed', here.name, oc.fail) : here.name,
+          tabTone: oc.fail ? 'fail' : 'work',
+          ticks: { label: t('wingline.world.tasksDone', oc.done, open.length), list: openStates },
+          tl: [
+            [t('wingline.world.k.pipelines'), String(pipes.length)],
+            [t('wingline.world.k.tasks'), String(open.length)],
+            [t('wingline.world.k.spent'), money(tasks.reduce((s, x) => s + (isNum(x.cost?.usd) ? x.cost.usd : 0), 0))]
+          ],
+          tr: [
+            [t('wingline.world.k.working'), two(oc.work)],
+            [t('wingline.world.k.needs'), two(oc.fail)],
+            [t('wingline.world.k.done'), two(oc.done)]
+          ]
+        }
+      }
+    : null
+  if (region)
+    for (const p of shown)
+      p.chrome = {
+        tab: p.name,
+        back: here.name,
+        tabTone: p.st === 'fail' ? 'fail' : 'work',
+        ticks: { label: t('wingline.world.tasksDone', p.counts.done, p.n), list: p.ticks },
+        tl: [
+          [t('wingline.world.k.tasks'), String(p.n)],
+          [t('wingline.world.k.runs'), String(p.runs)],
+          [t('wingline.world.k.spent'), money(p.usd)]
+        ],
+        tr: [
+          [t('wingline.world.k.working'), two(p.counts.work)],
+          [t('wingline.world.k.waiting'), two(p.counts.wait)],
+          [t('wingline.world.k.done'), two(p.counts.done)]
+        ]
+      }
+  return { boards, planet, region, spots }
 }
 
 const NODE = { w: 188, h: 48, gx: 40, gy: 8, pad: 10 }
@@ -2582,3 +2838,5 @@ export default {
     ctx.register({ id: 'nav', area: 'sidebar.nav', data: { path: ROUTE, label: navLabel(), codicon: 'pulse' } })
   }
 }
+
+export { worldOf }

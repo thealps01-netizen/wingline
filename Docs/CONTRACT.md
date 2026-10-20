@@ -25,7 +25,9 @@ reuse the core helper if importable, fail-open to `default`).
   "board": "hermes-approvals-ui",
   "boards": [{"slug": "...", "name": "...",   // name: Hermes' stored board name, shown as written
               "tasks": 17,                    // non-archived tasks on that board
-              "last_activity": 1792438796}],  // newest task/run/event stamp, or null
+              "last_activity": 1792438796,    // newest task/run/event stamp, or null
+              "needs_you": 1, "working": 0, "queued": 0, "done": 16,   // same rules as totals
+              "spend_usd": 46.16}],           // same rule as totals.spend_usd, for that board
   "now": 1792446113.1,                     // server epoch seconds
   "tasks": [{
     "id": "t_95000f55", "title": "...", "status": "blocked",   // raw Hermes status

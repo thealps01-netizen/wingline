@@ -71,6 +71,12 @@ and asserts nothing was created or changed.
 `needs_you` = blocked, `working` = running, `queued` = todo/ready/triage, `done` = done. Archived
 tasks are returned but not counted, except in `spend_usd`, which sums every task's cost.
 
+Every `boards[]` row carries the same four counts and `spend_usd` for its own board, so the world
+view's planet can show which board needs you without reading each board. The counts come from one
+`group by status` per board; the spend uses the same exact cost link over every board's task ids
+(state.db is read once per request). Measured on the real home (8 boards, 175 tasks): a request
+went from 12 to 19 ms, the largest board from 18 to 22 ms. The open board's row reuses its totals.
+
 ### Errors
 Every failed read (a state.db, the board DB, any of its tables, the board list) adds
 `{source, message}` with `source` relative to the root (`profiles/x/state.db`,
@@ -138,3 +144,26 @@ snapshot while the blocked task was still accruing — unverified).
   localStorage); the desktop half is copied into `desktop-plugins/` on renderer reload; a
   minimised window reports `visibilityState: hidden`, so the capture script forces it visible or
   the Board would (correctly) never poll.
+- **World converter (`worldOf`)** turns the overview into what the world view draws; it is the only
+  place where Kanban data becomes planet, region and site, and `tests/world_check.mjs` pins its rules.
+  - Pipelines are `groupsOf`'s groups, so a settlement and a Board-view heading always hold the same
+    tasks. A group whose tasks are all archived is left out and counted (`archivedOnly`).
+  - Place by the pipeline's spend, archived tasks included: under $4 a farm, $4–10 a village, over
+    $10 a port. A pipeline grows from farm to port as it costs more.
+  - State: blocked > running > any other open status (todo, ready, triage, scheduled, review) >
+    done. The Board view's header has no column for `scheduled` and `review`; the world shows them
+    as waiting.
+  - Limits keep the scene legible: 12 labelled boards (the open board first, then the ones that need
+    you, then working, waiting, newest), 12 settlements (needs you first, then newest), per site 3
+    builders, 6 reviews, 1 gate, 2 detectives. The rest is returned as a count (`more`) for the HUD.
+  - Board spots: a sunflower pattern of 48 spots on the planet's visible face (about 12° apart),
+    96 above 48 boards, and so on. A board's preferred spot is its slug's FNV-1a hash; collisions take
+    the next free spot. Hashing alone moved one or two boards in 37 of 500 tries when a board was
+    added, so `worldOf` returns its spot table (`spots`) and takes it back (`keep`): the page stores
+    it like the board pick, and stored spots win. Crossing a tier (48 → 96) lays the planet out anew.
+  - Pipeline keys: a chain is keyed by its smallest task id, a pair or family by kind and name, and
+    "Other tasks" by `other`; `seed` is the key's hash. They do not depend on order, time or state,
+    so the scene can place settlements by seed and keep them put.
+  - Titles and names are returned as stored. The scene must insert them as text (`textContent`),
+    never as HTML; the prototype's `chrome()` builds HTML strings and must be ported to DOM nodes.
+  - `worldOf` is a named export next to the default one; Hermes' loader reads only `default`.

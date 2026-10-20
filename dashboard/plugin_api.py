@@ -173,13 +173,18 @@ def _resolve_board(board: Optional[str], errors: list) -> str:
     return DEFAULT_BOARD
 
 
-def _board_stats(slug: str, errors: list) -> tuple[int, Optional[float]]:
+def _board_stats(slug: str, errors: list) -> tuple[int, Optional[float], dict, list[str]]:
     path = _board_db(slug)
+    by_status: dict[str, int] = {}
+    ids: list[str] = []
     if not path.is_file():
-        return 0, None
+        return 0, None, by_status, ids
     try:
         with closing(_ro(path)) as conn:
             count = conn.execute("select count(*) from tasks where status != 'archived'").fetchone()[0]
+            for r in conn.execute("select status, count(*) n from tasks group by status"):
+                by_status[r["status"]] = r["n"]
+            ids = [r["id"] for r in conn.execute("select id from tasks")]
             stamps = [conn.execute("select max(max(coalesce(created_at, 0), coalesce(started_at, 0), "
                                    "coalesce(completed_at, 0))) from tasks").fetchone()[0]]
             for sql in ("select max(max(coalesce(started_at, 0), coalesce(ended_at, 0))) from task_runs",
@@ -190,12 +195,17 @@ def _board_stats(slug: str, errors: list) -> tuple[int, Optional[float]]:
                     pass
     except Exception as exc:
         _err(errors, _label(path, _kanban_root()), exc)
-        return 0, None
+        return 0, None, {}, []
     found = [s for s in stamps if isinstance(s, (int, float)) and s > 0]
-    return int(count), (max(found) if found else None)
+    return int(count), (max(found) if found else None), by_status, ids
 
 
-def _list_boards(errors: list) -> list[dict]:
+def _counts(by_status: dict) -> dict:
+    return {"needs_you": by_status.get("blocked", 0), "working": by_status.get("running", 0),
+            "queued": sum(by_status.get(s, 0) for s in _QUEUED), "done": by_status.get("done", 0)}
+
+
+def _list_boards(errors: list) -> tuple[list[dict], dict[str, list[str]]]:
     rows = None
     try:
         rows = [{"slug": b.get("slug"), "name": b.get("name") or b.get("slug")}
@@ -216,12 +226,12 @@ def _list_boards(errors: list) -> list[dict]:
             meta = _board_meta(child.name)
             if not meta.get("archived"):
                 rows.append({"slug": child.name, "name": meta.get("name") or child.name})
-    out = []
+    out, ids = [], {}
     for row in rows:
         slug = row["slug"]
-        tasks, last = _board_stats(slug, errors)
-        out.append({"slug": slug, "name": row["name"], "tasks": tasks, "last_activity": last})
-    return out
+        tasks, last, by_status, ids[slug] = _board_stats(slug, errors)
+        out.append({"slug": slug, "name": row["name"], "tasks": tasks, "last_activity": last, **_counts(by_status)})
+    return out, ids
 
 
 def _board_db(slug: str) -> Path:
@@ -478,11 +488,11 @@ def build_overview(board: Optional[str] = None, now: Optional[float] = None) -> 
     errors: list[dict] = []
     now = time.time() if now is None else now
     slug = _resolve_board(board, errors)
-    boards = _list_boards(errors)
+    boards, board_ids = _list_boards(errors)
     kroot, root = _kanban_root(), _root()
     db = _board_db(slug)
     tasks, links, runs, comments, events = _read_board(db, _label(db, kroot), errors)
-    stores = _read_sessions(root, errors) if tasks else []
+    stores = _read_sessions(root, errors) if tasks or any(board_ids.values()) else []
     out_tasks = []
     totals = {"needs_you": 0, "working": 0, "queued": 0, "done": 0, "spend_usd": 0.0}
     for t in tasks:
@@ -517,6 +527,9 @@ def build_overview(board: Optional[str] = None, now: Optional[float] = None) -> 
         elif status == "done":
             totals["done"] += 1
     totals["spend_usd"] = round(totals["spend_usd"], 6)
+    for b in boards:
+        b["spend_usd"] = totals["spend_usd"] if b["slug"] == slug else round(
+            sum(cost(_task_sessions(tid, stores))["usd"] for tid in board_ids.get(b["slug"], [])), 6)
     return {"board": slug, "boards": boards, "now": now, "tasks": out_tasks, "totals": totals, "errors": errors}
 
 
@@ -693,6 +706,13 @@ def _selftest() -> int:
         ok(bl[slug]["name"] == "Wing Test", f"the board name is Hermes' stored name, as written: {bl[slug]}")
         ok(bl["named-board"]["name"] == "Approvals UI" and bl["named-board"]["tasks"] == 0
            and bl["named-board"]["last_activity"] is None, f"a chosen board name is shown as written: {bl['named-board']}")
+        ok({k: bl[slug][k] for k in ("needs_you", "working", "queued", "done")}
+           == {"needs_you": 4, "working": 1, "queued": 2, "done": 2}, f"board row counts tasks by status: {bl[slug]}")
+        ok(bl[slug]["spend_usd"] == data["totals"]["spend_usd"] and bl["named-board"]["spend_usd"] == 0,
+           f"board row spend of the open board is its total: {bl[slug]}")
+        other = {b["slug"]: b for b in build_overview("default", now=1000.0)["boards"]}
+        ok(other[slug]["spend_usd"] == data["totals"]["spend_usd"] and other[slug]["needs_you"] == 4,
+           f"a board that is not open gets the same spend and counts: {other[slug]}")
         by = {t["id"]: t for t in data["tasks"]}
         ok(len(by) == 10, "every task returned, archived included")
         roles = {k: by[k]["role"] for k in by}
