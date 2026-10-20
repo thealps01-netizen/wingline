@@ -1,6 +1,6 @@
 import { host, usePluginI18n } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 const ID = 'wingline'
 const ROUTE = '/wingline'
@@ -10,7 +10,7 @@ const KANBAN = '/api/plugins/kanban'
 const VIEW_KEY = 'view'
 const BOARD_KEY = 'board'
 const LOG_TAIL = 131072
-const BOX = { needs: 460, working: 260, pipeline: 420, timeline: 460, drawer: 760, error: 132, log: 300, problems: 132, dialog: 720 }
+const BOX = { working: 260, timeline: 520, error: 160, log: 300, problems: 132, dialog: 720 }
 const ROLES = ['builder', 'review', 'gate', 'detective']
 const ROLE_TONE = { builder: 'var(--ui-blue)', review: 'var(--ui-purple)', gate: 'var(--ui-orange)', detective: 'var(--ui-cyan)' }
 const STATUS_KEYS = ['blocked', 'running', 'todo', 'ready', 'triage', 'scheduled', 'review', 'done', 'archived']
@@ -27,13 +27,15 @@ const BUNDLES = {
       subtitle: 'Your Kanban boards, from the human side',
       nav: 'Wingline',
       boardPick: 'Kanban board',
+      boardOpt: (name, n) => `${name} · ${n === 1 ? '1 task' : `${n} tasks`}`,
+      raw: 'Raw error',
       view: { label: 'View', board: 'Board', factory: 'Factory' },
       count: { needs: 'Needs you', working: 'Working', queued: 'Queued', done: 'Done', spend: 'Spend', filter: label => `Show only ${label} in the timeline` },
       updated: s => `Updated ${s}`,
       loading: 'Loading the board…',
       empty: 'This board has no tasks yet.',
       tryAgain: 'Try again',
-      unit: { s: n => `${n} s`, min: n => `${n} min`, hm: (h, m) => (m ? `${h}h ${m}m` : `${h}h`) },
+      unit: { s: n => `${n}s`, m: n => `${n}m`, ms: (m, s) => `${m}m ${s}s`, hm: (h, m) => (m ? `${h}h ${m}m` : `${h}h`) },
       problems: {
         title: n => (n === 1 ? '1 problem reading or changing the board' : `${n} problems reading or changing the board`),
         dismiss: 'Dismiss',
@@ -54,21 +56,21 @@ const BUNDLES = {
       working: {
         title: 'Working now',
         none: 'No worker is running.',
-        lastStop: s => `The last one stopped ${s}. New work starts here when a task is ready.`,
+        lastStop: s => `Last one stopped ${s}.`,
         nothingYet: 'Nothing has run on this board yet.',
         elapsed: d => `running for ${d}`,
         limit: d => `limit ${d}`,
         noActivity: 'No activity reported yet.',
         ago: d => `${d} ago`
       },
-      pipe: { title: 'Pipeline', sub: 'parents → children', none: 'No task on this board waits for another.' },
+      pipe: { title: 'Pipeline', sub: 'every group on this board', dep: 'waits for', seq: 'next attempt or review of the same work' },
       tl: {
         title: 'Timeline',
-        sub: 'every attempt · idle stretches squeezed, working time at true length',
+        sub: 'grouped by pipeline · idle stretches squeezed, working time at true length',
         task: 'Task',
         spent: 'Spent',
         other: 'Other tasks',
-        group: (n, money) => `${n === 1 ? '1 task' : `${n} tasks`} · ${money}`,
+        group: (n, d, money) => `${n === 1 ? '1 task' : `${n} tasks`} · ${d} · ${money}`,
         roles: 'Roles:'
       },
       role: { builder: 'Builder', review: 'Reviewer', gate: 'Gate', detective: 'Investigator' },
@@ -129,6 +131,7 @@ const BUNDLES = {
       },
       act: {
         retry: 'Retry with more time',
+        details: 'Details',
         log: 'Open log',
         kanban: 'Open in Kanban',
         chat: 'Ask in chat',
@@ -211,7 +214,7 @@ const BUNDLES = {
         queueEmpty: 'Queue empty',
         none: 'none',
         crates: n => (n === 1 ? '1 crate' : `${n} crates`),
-        shipped: 'shipped · their cost',
+        shipped: 'shipped',
         inputs: (a, b) => `${a}/${b} inputs`,
         callLimit: 'STOPPED · TIME LIMIT',
         callCrash: 'STOPPED · CRASHED',
@@ -286,9 +289,10 @@ function stripAnsi(s) {
 
 function fmtDur(t, s) {
   if (!isNum(s) || s < 0) return '—'
-  if (s < 90) return t('wingline.unit.s', Math.round(s))
-  if (s < 5400) return t('wingline.unit.min', Math.round(s / 60))
-  const m = Math.round(s / 60)
+  const sec = Math.round(s)
+  if (sec < 60) return t('wingline.unit.s', sec)
+  if (sec < 3600) return sec % 60 ? t('wingline.unit.ms', Math.floor(sec / 60), sec % 60) : t('wingline.unit.m', sec / 60)
+  const m = Math.round(sec / 60)
   return t('wingline.unit.hm', Math.floor(m / 60), m % 60)
 }
 
@@ -427,83 +431,104 @@ const firstStart = task => {
   const r = runsOf(task)[0]
   return r ? r.started_at : isNum(task.created_at) ? task.created_at : 0
 }
+const byStart = (a, b) => firstStart(a) - firstStart(b)
+const titleKey = s =>
+  String(s || '')
+    .split(':')[0]
+    .replace(/\s*\((?:retry|rerun)\)\s*$/i, '')
+    .replace(/\s+(?:review|retry)$/i, '')
+    .trim()
 
-function timelineGroups(tasks, t) {
-  const comps = components(tasks)
+function groupsOf(tasks, t) {
+  const ids = new Set(tasks.map(x => x.id))
   const groups = []
-  const singles = []
-  for (const c of comps) {
-    if (c.length > 1) groups.push({ name: commonPrefix(c.map(x => x.title)) || c[0].title, tasks: c })
-    else singles.push(c[0])
+  let loose = []
+  for (const c of components(tasks)) {
+    if (c.length < 2) {
+      loose.push(c[0])
+      continue
+    }
+    const list = [...c].sort(byStart)
+    const edges = []
+    for (const x of list) for (const p of x.parents || []) if (ids.has(p)) edges.push({ from: p, to: x.id, kind: 'dep' })
+    groups.push({ kind: 'chain', name: commonPrefix(list.map(x => x.title)) || list[0].title, tasks: list, edges })
   }
-  const byWord = new Map()
-  for (const x of singles) {
-    const word = String(x.title || '').split(' ')[0].toLowerCase()
-    if (!byWord.has(word)) byWord.set(word, [])
-    byWord.get(word).push(x)
+  const bucket = (list, keyOf, make) => {
+    const by = new Map()
+    for (const x of list) {
+      const k = keyOf(x)
+      if (!by.has(k)) by.set(k, [])
+      by.get(k).push(x)
+    }
+    const rest = []
+    for (const [k, l] of by) {
+      if (k && l.length > 1) groups.push(make(k, [...l].sort(byStart)))
+      else rest.push(...l)
+    }
+    return rest
   }
-  const rest = []
-  for (const [word, list] of byWord) {
-    if (list.length > 1 && word) groups.push({ name: commonPrefix(list.map(x => x.title)) || word, tasks: list })
-    else rest.push(...list)
-  }
-  if (rest.length) groups.push({ name: t('wingline.tl.other'), tasks: rest, other: true })
-  for (const g of groups) g.tasks.sort((a, b) => firstStart(a) - firstStart(b))
+  loose = bucket(loose, x => titleKey(x.title).toLowerCase(), (k, l) => ({
+    kind: 'pair',
+    name: titleKey(l[0].title),
+    tasks: l,
+    edges: l.slice(1).map((x, i) => ({ from: l[i].id, to: x.id, kind: 'seq' }))
+  }))
+  loose = bucket(loose, x => String(x.title || '').split(' ')[0].toLowerCase(), (k, l) => ({
+    kind: 'family',
+    name: commonPrefix(l.map(x => x.title)) || k,
+    tasks: l,
+    edges: []
+  }))
+  if (loose.length) groups.push({ kind: 'other', name: t('wingline.tl.other'), tasks: [...loose].sort(byStart), edges: [], other: true })
   groups.sort((a, b) => (a.other ? 1 : 0) - (b.other ? 1 : 0) || firstStart(a.tasks[0]) - firstStart(b.tasks[0]))
   return groups
 }
 
-const NODE = { w: 200, h: 52, gx: 110, gy: 10, pad: 16, gap: 26 }
+function shortTitle(task, prefix) {
+  const title = String(task?.title || '')
+  if (!prefix || !title.startsWith(prefix) || title.length <= prefix.length + 1) return title
+  return title.slice(prefix.length).replace(/^[\s:·—-]+/, '') || title
+}
 
-function pipelineLayout(tasks) {
-  const byId = new Map(tasks.map(x => [x.id, x]))
-  const comps = components(tasks).filter(c => c.length > 1)
-  const nodes = []
-  const edges = []
-  let top = NODE.pad
-  let width = 0
-  for (const comp of comps) {
-    const depth = new Map()
+const NODE = { w: 188, h: 48, gx: 40, gy: 8, pad: 10 }
+
+function groupLayout(g) {
+  const inGroup = new Map(g.tasks.map(x => [x.id, x]))
+  const col = new Map()
+  if (g.kind === 'chain') {
     const visiting = new Set()
     const depthOf = x => {
-      if (depth.has(x.id)) return depth.get(x.id)
+      if (col.has(x.id)) return col.get(x.id)
       if (visiting.has(x.id)) return 0
       visiting.add(x.id)
-      const ps = (x.parents || []).map(p => byId.get(p)).filter(Boolean)
+      const ps = (x.parents || []).map(p => inGroup.get(p)).filter(Boolean)
       const d = ps.length ? Math.max(...ps.map(depthOf)) + 1 : 0
       visiting.delete(x.id)
-      depth.set(x.id, d)
+      col.set(x.id, d)
       return d
     }
-    comp.forEach(depthOf)
-    const cols = []
-    for (const x of [...comp].sort((a, b) => firstStart(a) - firstStart(b))) {
-      const d = depth.get(x.id)
-      if (!cols[d]) cols[d] = []
-      cols[d].push(x)
-    }
-    const prefix = commonPrefix(comp.map(x => x.title))
-    const rows = Math.max(...cols.map(c => (c ? c.length : 0)))
-    const compH = rows * NODE.h + (rows - 1) * NODE.gy
-    cols.forEach((col, d) => {
-      if (!col) return
-      const colH = col.length * NODE.h + (col.length - 1) * NODE.gy
-      col.forEach((x, k) => {
-        const label = prefix && String(x.title).length > prefix.length + 1 ? String(x.title).slice(prefix.length).trim() : x.title
-        nodes.push({ task: x, label, x: NODE.pad + d * (NODE.w + NODE.gx), y: top + (compH - colH) / 2 + k * (NODE.h + NODE.gy) })
-      })
-      width = Math.max(width, NODE.pad * 2 + (d + 1) * NODE.w + d * NODE.gx)
+    g.tasks.forEach(depthOf)
+  } else if (g.kind === 'pair') g.tasks.forEach((x, i) => col.set(x.id, i))
+  else g.tasks.forEach(x => col.set(x.id, 0))
+  const cols = []
+  for (const x of g.tasks) {
+    const d = col.get(x.id)
+    if (!cols[d]) cols[d] = []
+    cols[d].push(x)
+  }
+  const rows = Math.max(...cols.map(c => (c ? c.length : 0)))
+  const inner = rows * NODE.h + (rows - 1) * NODE.gy
+  const nodes = []
+  cols.forEach((list, d) => {
+    if (!list) return
+    const colH = list.length * NODE.h + (list.length - 1) * NODE.gy
+    list.forEach((x, k) => {
+      nodes.push({ task: x, label: shortTitle(x, g.kind === 'other' ? '' : g.name), x: NODE.pad + d * (NODE.w + NODE.gx), y: NODE.pad + (inner - colH) / 2 + k * (NODE.h + NODE.gy) })
     })
-    top += compH + NODE.gap
-  }
+  })
   const at = new Map(nodes.map(n => [n.task.id, n]))
-  for (const n of nodes) {
-    for (const p of n.task.parents || []) {
-      const from = at.get(p)
-      if (from) edges.push({ key: `${p}>${n.task.id}`, from, to: n })
-    }
-  }
-  return { nodes, edges, width, height: top - NODE.gap + NODE.pad }
+  const edges = g.edges.filter(e => at.has(e.from) && at.has(e.to)).map(e => ({ ...e, key: `${e.from}>${e.to}`, a: at.get(e.from), b: at.get(e.to) }))
+  return { nodes, edges, width: NODE.pad * 2 + cols.length * NODE.w + (cols.length - 1) * NODE.gx, height: NODE.pad * 2 + inner }
 }
 
 const LANES = [300, 400, 500, 600]
@@ -527,7 +552,7 @@ const BELTS = [
   [[1000, 450], [1290, 450]]
 ]
 const RED_BELT = [[548, 770], [1110, 770]]
-const CABLES = ['M486,262 C590,262 620,300 662,300', 'M486,440 C600,440 640,470 662,470']
+const CABLES = ['M486,262 C590,262 620,300 662,300', 'M486,440 L600,440 L640,470 L662,470']
 const ZONE = {
   intake: { x: 40, y: 300, w: 186, h: 300 },
   dock: { x: 1290, y: 190, w: 272, h: 376 },
@@ -535,6 +560,10 @@ const ZONE = {
   scrap: { x: 48, y: 676, w: 166, h: 140 }
 }
 const CAP = { intake: 10, dock: 42, bay: 4, scrap: 12 }
+const SCENE = { x: 14, y: 72, w: 1572, h: 812 }
+const RC = { builder: '#3d7dd8', review: '#8b6fd6', gate: '#e2a336', detective: '#2fa58e' }
+const RC_LIGHT = { builder: '#6d9de1', review: '#a893e0', gate: '#e9ba68', detective: '#63bcaa' }
+const FS = { zone: 17, name: 16, tag: 16, note: 16, num: 16, sign: 30 }
 const ptsAttr = list => list.map(p => p.join(',')).join(' ')
 
 function archivedAt(task) {
@@ -590,7 +619,7 @@ function layoutFactory(tasks, T) {
     return r ? runEnd(r, r.started_at) : isNum(x.created_at) ? x.created_at : 0
   }
   zones.intake.sort((a, b) => (a.created_at || 0) - (b.created_at || 0))
-  zones.machine.sort((a, b) => firstStart(a) - firstStart(b))
+  zones.machine.sort(byStart)
   zones.bay.sort((a, b) => endOf(a) - endOf(b))
   zones.dock.sort((a, b) => endOf(a) - endOf(b))
   zones.scrap.sort((a, b) => endOf(a) - endOf(b))
@@ -622,6 +651,86 @@ function layoutFactory(tasks, T) {
     overflow[z] = Math.max(0, zones[z].length - CAP[z])
   }
   return { zones, zoneOf, occ, pos, kinds, overflow }
+}
+
+const INK = {
+  bg0: '#ddd3c2',
+  bg1: '#d2c7b4',
+  floor0: '#f3ede2',
+  floor1: '#ebe3d5',
+  grid: 'rgba(120,95,55,.07)',
+  intake: '#e6dece',
+  intakeLine: '#cbbfa8',
+  door: '#b9ae99',
+  doorSlat: 'rgba(255,255,255,.25)',
+  dock: '#e4d3b5',
+  plank: 'rgba(120,85,40,.10)',
+  scrap: '#e2ddd4',
+  scrapLine: '#c6beb0',
+  bed: '#3a4150',
+  bedIn: '#4a5264',
+  slat: 'rgba(255,255,255,.11)',
+  redBed: '#2b2d33',
+  yellow: '#f2c230',
+  cable: '#c9bfae',
+  cableIn: '#e9e2d6',
+  label: '#776b58',
+  ink: '#26303f',
+  mute: '#5f6779',
+  block0: '#fdfbf7',
+  block1: '#ece5d8',
+  lab1: '#e9e2d4',
+  housing: '#2f3747',
+  vent: 'rgba(255,255,255,.10)',
+  rod: '#8a92a3',
+  plate: 'rgba(40,30,10,.14)',
+  inset: 'rgba(0,0,0,.15)',
+  shine: 'rgba(255,255,255,.25)',
+  glass: 'rgba(139,111,214,.08)',
+  glassOn: 'rgba(139,111,214,.20)',
+  glassLine: 'rgba(139,111,214,.55)',
+  beam: 'rgba(196,181,253,.95)',
+  scanNum: '#dfe3ec',
+  disc0: '#ffd98a',
+  ring: 'rgba(255,255,255,.6)',
+  dome: 'rgba(47,165,142,.10)',
+  liquid: 'rgba(47,165,142,.35)',
+  liquidOn: 'rgba(47,165,142,.55)',
+  domeLine: 'rgba(47,165,142,.6)',
+  glint: 'rgba(255,255,255,.8)',
+  lampIdle: '#8fd3a5',
+  lampWork: '#2fd07a',
+  lampRed: '#ff3b3b',
+  lampAmber: '#ffb020',
+  lampAmberDim: '#c98a1a',
+  lampOff: '#d8d0c2',
+  lampHi: 'rgba(255,255,255,.7)',
+  crateLid: '#efd7ae',
+  crate0: '#dcb784',
+  crate1: '#c99c64',
+  tape: '#c9985e',
+  shade: 'rgba(0,0,0,.06)',
+  crateShadow: 'rgba(60,40,10,.22)',
+  crateHi: 'rgba(255,255,255,.35)',
+  scrapLid: '#d8d4cc',
+  scrap0: '#c9c3b8',
+  scrap1: '#b9b2a6',
+  scrapTape: '#bdb6aa',
+  scrapTag: '#9aa0ab',
+  red: '#e5484d',
+  redText: '#c0353a',
+  amber: '#e9a23b',
+  amberText: '#8f5c12',
+  white: '#ffffff',
+  card: '#fffdf8',
+  bin: '#efe7dc',
+  binOn: '#f5e6e0',
+  binLine: '#3a4150',
+  binOff: '#cfc5b4',
+  halo: 'rgba(229,72,77,.14)',
+  ringRed: 'rgba(229,72,77,.55)',
+  shadow: '#3c280a',
+  smoke: '#5f626b'
 }
 
 const ICONS = {
@@ -667,38 +776,40 @@ function Btn({ icon, label, onClick, kind, disabled, id }) {
 }
 
 const CSS = `
-.wl-root{container:wl/inline-size;position:relative;min-height:100%;box-sizing:border-box;padding:0 0 28px;color:var(--ui-text-primary);background:var(--ui-bg-chrome);font-size:13px;line-height:1.5}
+.wl-root{container:wl/inline-size;position:relative;min-height:100%;box-sizing:border-box;padding:0 0 24px;color:var(--ui-text-primary);background:var(--ui-bg-chrome);font-size:13px;line-height:1.5}
 .wl-root *{box-sizing:border-box}
 .wl-root button{font:inherit;color:inherit;cursor:pointer}
 .wl-root :focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px;border-radius:6px}
+.wl-root ::selection{background:color-mix(in srgb,var(--ui-accent) 35%,transparent)}
 .wl-i{flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
-.wl-num{font-variant-numeric:tabular-nums}
-.wl-top{position:sticky;top:0;z-index:6;display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:12px 20px;background:var(--ui-bg-chrome);border-bottom:1px solid var(--ui-stroke-tertiary)}
+.wl-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+.wl-muted{margin:4px 0;color:var(--ui-text-tertiary);font-size:12.5px}
+.wl-top{position:sticky;top:0;z-index:6;display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;padding:12px 24px;background:var(--ui-bg-chrome);border-bottom:1px solid var(--ui-stroke-tertiary)}
 .wl-brand{display:flex;flex-direction:column;min-width:0}
 .wl-brand h1{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
 .wl-brand span{font-size:12px;color:var(--ui-text-tertiary)}
-.wl-select{height:30px;max-width:220px;padding:0 8px;border-radius:8px;border:1px solid var(--ui-stroke-secondary);background:var(--ui-bg-editor);color:var(--ui-text-primary);font:inherit}
+.wl-select{height:30px;max-width:260px;padding:0 8px;border-radius:8px;border:1px solid var(--ui-stroke-secondary);background:var(--ui-bg-editor);color:var(--ui-text-primary);font:inherit}
 .wl-seg{display:inline-flex;gap:2px;padding:3px;background:var(--ui-bg-secondary);border:1px solid var(--ui-stroke-tertiary);border-radius:10px}
 .wl-seg button{border:0;background:none;padding:4px 12px;border-radius:7px;color:var(--ui-text-secondary);font-weight:500}
 .wl-seg button:hover{color:var(--ui-text-primary)}
 .wl-seg button[aria-pressed=true]{background:var(--ui-bg-elevated);color:var(--ui-text-primary)}
 .wl-counts{display:flex;flex-wrap:wrap;gap:4px;margin-left:auto}
-.wl-count{display:inline-flex;align-items:center;gap:7px;padding:4px 10px;border-radius:9px;border:1px solid transparent;background:none;color:var(--ui-text-secondary);font-size:12.5px}
+.wl-count{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:9px;border:1px solid transparent;background:none;color:var(--ui-text-secondary);font-size:12.5px}
 .wl-count b{color:var(--ui-text-primary);font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
 .wl-count:hover{background:var(--ui-bg-secondary);border-color:var(--ui-stroke-tertiary)}
 .wl-count[aria-pressed=true]{background:var(--ui-bg-secondary);border-color:var(--ui-stroke-secondary)}
-.wl-count.is-alert{border-color:color-mix(in srgb,var(--ui-yellow) 45%,transparent);background:color-mix(in srgb,var(--ui-yellow) 9%,transparent)}
+.wl-count.is-alert{border-color:color-mix(in srgb,var(--ui-yellow) 45%,transparent);background:color-mix(in srgb,var(--ui-yellow) 10%,transparent)}
 .wl-count .wl-dot{width:8px;height:8px;border-radius:50%}
 .wl-count.is-static{cursor:default}
 .wl-count.is-static:hover{background:none;border-color:transparent}
-.wl-updated{font-size:11.5px;color:var(--ui-text-tertiary);white-space:nowrap}
-.wl-problems{margin:12px 20px 0;padding:10px 14px;border-radius:10px;border:1px solid color-mix(in srgb,var(--ui-red) 45%,transparent);background:color-mix(in srgb,var(--ui-red) 8%,var(--ui-bg-chrome));max-height:${BOX.problems}px;overflow:auto}
-.wl-problems-head{display:flex;align-items:center;gap:10px;font-weight:600}
+.wl-updated{font-size:11.5px;color:var(--ui-text-tertiary);white-space:nowrap;font-variant-numeric:tabular-nums}
+.wl-problems{margin:12px 24px 0;padding:8px 12px;border-radius:10px;border:1px solid color-mix(in srgb,var(--ui-red) 45%,transparent);background:color-mix(in srgb,var(--ui-red) 8%,var(--ui-bg-chrome));max-height:${BOX.problems}px;overflow:auto}
+.wl-problems-head{display:flex;align-items:center;gap:8px;font-weight:600}
 .wl-problems-head .wl-i{stroke:var(--ui-red)}
-.wl-problems ul{margin:6px 0 0;padding-left:24px;font-size:12.5px;color:var(--ui-text-secondary)}
+.wl-problems ul{margin:4px 0 0;padding-left:24px;font-size:12.5px;color:var(--ui-text-secondary)}
 .wl-problems li{overflow-wrap:anywhere}
 .wl-problems li b{color:var(--ui-text-primary);font-weight:600}
-.wl-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:9px;background:var(--ui-bg-tertiary);border:1px solid var(--ui-stroke-secondary);color:var(--ui-text-primary);font-size:12.5px;font-weight:500;white-space:nowrap}
+.wl-btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:8px;background:var(--ui-bg-tertiary);border:1px solid var(--ui-stroke-secondary);color:var(--ui-text-primary);font-size:12.5px;font-weight:500;white-space:nowrap}
 .wl-btn:hover{background:var(--ui-control-hover-background)}
 .wl-btn.is-primary{background:var(--ui-text-primary);border-color:var(--ui-text-primary);color:var(--ui-bg-chrome)}
 .wl-btn.is-primary:hover{opacity:.9;background:var(--ui-text-primary)}
@@ -706,235 +817,208 @@ const CSS = `
 .wl-btn.is-ghost{background:none;border-color:transparent;color:var(--ui-text-secondary)}
 .wl-btn.is-ghost:hover{background:var(--ui-bg-tertiary);color:var(--ui-text-primary)}
 .wl-btn[disabled]{opacity:.45;cursor:default}
-.wl-state{display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin:24px 20px;padding:18px 20px;border-radius:12px;border:1px solid var(--ui-stroke-tertiary);background:var(--ui-bg-secondary);color:var(--ui-text-secondary)}
-.wl-board{display:grid;grid-template-columns:minmax(0,1fr);gap:20px;padding:20px}
-@container wl (min-width:1040px){.wl-board{grid-template-columns:minmax(0,1fr) 360px}}
-.wl-main{min-width:0;display:flex;flex-direction:column;gap:26px}
-.wl-h2{margin:0 0 10px;font-size:14px;font-weight:600;display:flex;align-items:baseline;gap:10px;letter-spacing:-.01em}
+.wl-state{display:flex;flex-direction:column;align-items:flex-start;gap:8px;margin:24px;padding:16px 20px;border-radius:12px;border:1px solid var(--ui-stroke-tertiary);background:var(--ui-bg-secondary);color:var(--ui-text-secondary)}
+.wl-main{min-width:0;display:flex;flex-direction:column;gap:24px;padding:20px 24px;max-width:1280px}
+.wl-h2{margin:0 0 8px;font-size:13px;font-weight:600;display:flex;align-items:baseline;gap:8px;color:var(--ui-text-secondary)}
 .wl-h2 small{font-weight:400;color:var(--ui-text-tertiary);font-size:12px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl-sec.is-needs>.wl-h2{font-size:15px;color:var(--ui-text-primary)}
+.wl-h4{margin:16px 0 8px;font-size:12.5px;font-weight:600;color:var(--ui-text-secondary)}
 .wl-panel{background:var(--ui-bg-secondary);border:1px solid var(--ui-stroke-tertiary);border-radius:12px;min-width:0}
-.wl-needs{display:flex;flex-direction:column;gap:10px;max-height:${BOX.needs}px;overflow:auto}
-.wl-attn{flex:none;display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;padding:16px 18px;cursor:pointer;border-color:color-mix(in srgb,var(--ui-yellow) 40%,var(--ui-stroke-tertiary));background:linear-gradient(180deg,color-mix(in srgb,var(--ui-yellow) 9%,transparent),transparent 70%),var(--ui-bg-secondary)}
-.wl-attn.is-sel{border-color:var(--ui-yellow)}
-.wl-badge{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:color-mix(in srgb,var(--ui-yellow) 14%,transparent);border:1px solid color-mix(in srgb,var(--ui-yellow) 40%,transparent)}
-.wl-badge .wl-i{stroke:var(--ui-yellow)}
-.wl-attn h3{margin:0;font-size:15px;font-weight:600;line-height:1.35;overflow-wrap:anywhere}
-.wl-reason{margin:6px 0 0;max-width:80ch;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow-wrap:anywhere}
-.wl-facts{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:10px;font-size:12px;color:var(--ui-text-tertiary)}
-.wl-facts span{display:inline-flex;align-items:center;gap:5px}
-.wl-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
-.wl-empty{display:flex;align-items:center;gap:10px;padding:14px 16px;color:var(--ui-text-secondary)}
-.wl-empty b{color:var(--ui-text-primary);font-weight:600}
+.wl-slim{display:flex;align-items:center;gap:8px;margin:0;min-height:32px;padding:6px 12px;border-radius:9px;background:var(--ui-bg-secondary);color:var(--ui-text-secondary);font-size:12.5px;white-space:nowrap;overflow:hidden}
+.wl-slim b{color:var(--ui-text-primary);font-weight:600}
+.wl-slim span{overflow:hidden;text-overflow:ellipsis}
+.wl-needs{display:flex;flex-direction:column;gap:12px}
+.wl-attn{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;padding:16px 20px;cursor:pointer;border-radius:12px;border:1px solid color-mix(in srgb,var(--ui-yellow) 55%,var(--ui-stroke-tertiary));background:color-mix(in srgb,var(--ui-yellow) 7%,var(--ui-bg-secondary))}
+.wl-attn:hover{border-color:var(--ui-yellow)}
+.wl-attn.is-sel{border-color:var(--ui-yellow);box-shadow:0 0 0 1px var(--ui-yellow)}
+.wl-badge{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:color-mix(in srgb,var(--ui-yellow) 18%,transparent);color:var(--ui-yellow)}
+.wl-attn-body{min-width:0}
+.wl-attn h3{margin:0;font-size:16px;font-weight:600;line-height:1.35;overflow-wrap:anywhere}
+.wl-reason{margin:4px 0 0;font-size:14px;color:var(--ui-text-primary);max-width:90ch;overflow-wrap:anywhere}
+.wl-facts{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:8px;font-size:12px;color:var(--ui-text-tertiary);font-variant-numeric:tabular-nums}
+.wl-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.wl-rawbox{margin-top:8px;font-size:12px;color:var(--ui-text-tertiary)}
+.wl-rawbox summary{cursor:pointer;width:max-content}
+.wl-rawbox summary:hover{color:var(--ui-text-secondary)}
+.wl-rawtext{margin:6px 0 0;max-height:${BOX.error}px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:8px 10px;border-radius:8px;background:var(--ui-bg-editor);color:var(--ui-text-secondary)}
 .wl-work{display:flex;flex-direction:column;gap:8px;max-height:${BOX.working}px;overflow:auto}
-.wl-wrow{flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding:12px 14px;cursor:pointer}
+.wl-wrow{flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding:12px 16px;cursor:pointer;border-color:color-mix(in srgb,var(--ui-accent) 40%,var(--ui-stroke-tertiary))}
 .wl-wrow.is-sel{border-color:var(--ui-accent)}
 .wl-wtitle{display:flex;align-items:center;gap:8px;min-width:0;font-weight:600}
 .wl-wtitle span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wl-wmeta{font-size:12px;color:var(--ui-text-tertiary);white-space:nowrap}
+.wl-wmeta{font-size:12px;color:var(--ui-text-tertiary);white-space:nowrap;font-variant-numeric:tabular-nums}
 .wl-wact{grid-column:1/-1;font-size:12px;color:var(--ui-text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wl-bar{grid-column:1/-1;height:4px;border-radius:2px;background:var(--ui-bg-tertiary);overflow:hidden}
 .wl-bar i{display:block;height:100%;background:var(--ui-accent)}
-.wl-pipe{padding:10px 6px 6px;overflow:auto;max-height:${BOX.pipeline}px}
+.wl-pipes{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
+.wl-pipe{margin:0;padding:8px 8px 4px;border-radius:12px;background:var(--ui-bg-secondary);border:1px solid var(--ui-stroke-tertiary);max-width:100%;overflow-x:auto}
+.wl-pipe figcaption{display:flex;align-items:baseline;gap:8px;padding:0 4px 4px;font-size:12.5px;min-width:0}
+.wl-pipe figcaption b{font-weight:600;white-space:nowrap}
+.wl-pipe figcaption span{color:var(--ui-text-tertiary);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
 .wl-pipe svg{display:block}
 .wl-node{cursor:pointer;outline:none}
 .wl-card{fill:var(--ui-bg-tertiary);stroke:var(--ui-stroke-secondary);stroke-width:1}
 .wl-node:hover .wl-card,.wl-node:focus-visible .wl-card,.wl-node.is-sel .wl-card{stroke:var(--ui-accent);stroke-width:1.5}
 .wl-edge{stroke:var(--ui-stroke-primary);stroke-width:1.5;fill:none}
+.wl-edge.is-seq{stroke-dasharray:4 4}
 .wl-arrow{fill:var(--ui-stroke-primary)}
-.wl-nt{height:100%;padding:7px 12px 0 26px;font-size:12.5px;line-height:1.35;pointer-events:none}
+.wl-nt{height:100%;padding:6px 8px 0 24px;font-size:12.5px;line-height:1.35;pointer-events:none}
 .wl-nt b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wl-nt span{display:block;color:var(--ui-text-tertiary);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
-.wl-tl{padding:6px 0 0}
-.wl-tl-head,.wl-tl-row{display:grid;grid-template-columns:minmax(120px,240px) minmax(0,1fr) 64px;gap:12px;align-items:center}
-.wl-tl-head{font-size:11px;color:var(--ui-text-tertiary);height:28px;padding:0 18px;border-bottom:1px solid var(--ui-stroke-tertiary)}
+.wl-key{display:flex;gap:16px;margin:8px 0 0;font-size:12px;color:var(--ui-text-tertiary)}
+.wl-key span{display:inline-flex;align-items:center;gap:6px}
+.wl-key i{display:inline-block;width:18px;border-top:1.5px solid var(--ui-stroke-primary)}
+.wl-key i.is-seq{border-top-style:dashed}
+.wl-tl{overflow:hidden}
+.wl-tl-head,.wl-tl-row{display:grid;grid-template-columns:minmax(140px,260px) minmax(0,1fr) 64px;gap:12px;align-items:center}
+.wl-tl-head{font-size:11.5px;color:var(--ui-text-tertiary);height:28px;padding:0 16px;border-bottom:1px solid var(--ui-stroke-tertiary)}
+.wl-tl-cost{text-align:right}
 .wl-ticks{position:relative;height:100%}
-.wl-ticks span{position:absolute;top:6px;white-space:nowrap;transform:translateX(-50%)}
-.wl-ticks span:first-child{transform:none}
-.wl-ticks span:last-child{transform:translateX(-100%)}
-.wl-tl-body{max-height:${BOX.timeline}px;overflow:auto;padding-bottom:4px}
-.wl-tl-group{padding:10px 18px 4px;font-size:12px;font-weight:600;color:var(--ui-text-secondary);display:flex;gap:8px;min-width:0}
-.wl-tl-group em{font-style:normal;font-weight:400;color:var(--ui-text-tertiary);white-space:nowrap}
-.wl-tl-row{height:32px;cursor:pointer;border-radius:8px;margin:0 4px;padding:0 14px}
+.wl-ticks span{position:absolute;top:6px;white-space:nowrap;transform:translateX(-50%);font-variant-numeric:tabular-nums}
+.wl-tl-body{max-height:${BOX.timeline}px;overflow:auto;padding:0 0 4px}
+.wl-tl-group{display:flex;align-items:baseline;gap:8px;min-width:0;height:26px;padding:6px 16px 0;font-size:12px;font-weight:600;color:var(--ui-text-secondary)}
+.wl-tl-group span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl-tl-group em{font-style:normal;font-weight:400;color:var(--ui-text-tertiary);white-space:nowrap;font-variant-numeric:tabular-nums}
+.wl-tl-row{height:24px;cursor:pointer;border-radius:6px;margin:0 4px;padding:0 12px;font-size:12.5px}
 .wl-tl-row:hover{background:var(--ui-row-hover-background)}
 .wl-tl-row.is-sel{background:var(--ui-row-active-background)}
 .wl-tl-row.is-dim{opacity:.35}
 .wl-tl-name{display:flex;align-items:center;gap:8px;min-width:0}
 .wl-tl-name span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wl-role{width:8px;height:8px;border-radius:2px;flex:none;display:inline-block}
-.wl-track{position:relative;height:20px}
-.wl-grid{position:absolute;inset:0;background:repeating-linear-gradient(90deg,var(--ui-stroke-quaternary) 0 1px,transparent 1px 25%)}
-.wl-run{position:absolute;top:5px;height:10px;border-radius:5px;min-width:4px}
+.wl-track{position:relative;height:16px}
+.wl-gridline{position:absolute;top:-4px;bottom:-4px;width:1px;background:var(--ui-stroke-quaternary)}
+.wl-run{position:absolute;top:4px;height:8px;border-radius:4px;min-width:6px}
 .wl-k-ok{background:var(--ui-green)}
 .wl-k-paused{background:var(--ui-yellow)}
 .wl-k-running{background:var(--ui-accent)}
-.wl-k-stopped{background:repeating-linear-gradient(-45deg,var(--ui-red) 0 4px,color-mix(in srgb,var(--ui-red) 55%,var(--ui-bg-chrome)) 4px 8px)}
+.wl-k-stopped{background:var(--ui-red)}
 .wl-cost{text-align:right;font-size:12px;color:var(--ui-text-secondary);font-variant-numeric:tabular-nums}
-.wl-legend{display:flex;gap:16px;flex-wrap:wrap;padding:10px 18px;font-size:12px;color:var(--ui-text-tertiary);border-top:1px solid var(--ui-stroke-tertiary)}
+.wl-legend{display:flex;gap:16px;flex-wrap:wrap;padding:8px 16px;font-size:12px;color:var(--ui-text-tertiary);border-top:1px solid var(--ui-stroke-tertiary)}
 .wl-legend span{display:inline-flex;align-items:center;gap:6px}
 .wl-legend i{display:inline-block;width:14px;height:8px;border-radius:4px}
-.wl-dr{align-self:start;position:sticky;top:72px;max-height:${BOX.drawer}px;overflow:auto;padding:18px;min-width:0;overflow-wrap:anywhere}
-.wl-dr-top{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ui-text-tertiary)}
-.wl-dr-top .wl-x{margin-left:auto}
+.wl-roles{margin-left:auto;gap:12px!important}
+.wl-sheet{position:fixed;z-index:30;top:0;right:0;height:100vh;width:min(440px,100vw);display:flex;flex-direction:column;background:var(--ui-bg-elevated);border-left:1px solid var(--ui-stroke-secondary);box-shadow:-12px 0 32px color-mix(in srgb,var(--ui-bg-chrome) 55%,transparent);overflow-wrap:anywhere}
+.wl-sheet-head{flex:none;padding:16px 20px 12px;border-bottom:1px solid var(--ui-stroke-tertiary)}
+.wl-sheet-top{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ui-text-tertiary)}
+.wl-sheet-top .wl-x{margin-left:auto}
 .wl-x{border:0;background:var(--ui-bg-tertiary);border-radius:8px;width:28px;height:28px;display:grid;place-items:center}
-.wl-dr h3{margin:8px 0 10px;font-size:16px;font-weight:600;line-height:1.3;letter-spacing:-.01em}
-.wl-status{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;background:var(--ui-bg-tertiary);border:1px solid var(--ui-stroke-tertiary)}
+.wl-x:hover{background:var(--ui-control-hover-background)}
+.wl-sheet h3{margin:8px 0;font-size:16px;font-weight:600;line-height:1.3}
+.wl-sheet-body{flex:1;min-height:0;overflow:auto;padding:12px 20px 16px}
+.wl-sheet-why{margin:0 0 12px;font-size:13.5px}
+.wl-sheet-foot{flex:none;display:flex;flex-wrap:wrap;gap:8px;padding:12px 20px;border-top:1px solid var(--ui-stroke-tertiary);background:var(--ui-bg-elevated)}
+.wl-status{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;background:var(--ui-bg-tertiary);border:1px solid var(--ui-stroke-tertiary)}
 .wl-status i{width:7px;height:7px;border-radius:50%}
-.wl-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
-.wl-why{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--ui-yellow) 8%,var(--ui-bg-secondary));border-left:3px solid var(--ui-yellow)}
-.wl-why small,.wl-sub{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ui-text-tertiary);margin-bottom:2px}
-.wl-err{margin-top:8px;max-height:${BOX.error}px;overflow:auto;white-space:pre-wrap;padding:8px 10px;border-radius:8px;background:var(--ui-bg-editor);color:var(--ui-text-secondary)}
-.wl-raw{margin-top:6px;font-size:12px;color:var(--ui-text-tertiary)}
-.wl-raw summary{cursor:pointer}
-.wl-dl{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin:14px 0;background:var(--ui-stroke-tertiary);border-radius:10px;overflow:hidden}
+.wl-dl{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin:0 0 12px;background:var(--ui-stroke-tertiary);border-radius:10px;overflow:hidden}
 .wl-dl div{background:var(--ui-bg-tertiary);padding:8px 10px;min-width:0}
-.wl-dl dt{font-size:11px;color:var(--ui-text-tertiary)}
+.wl-dl dt{font-size:11.5px;color:var(--ui-text-tertiary)}
 .wl-dl dd{margin:2px 0 0;font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
-.wl-dl dd small{display:block;font-size:11px;font-weight:400;color:var(--ui-text-tertiary)}
-.wl-kv{display:grid;grid-template-columns:92px minmax(0,1fr);gap:5px 10px;font-size:12.5px}
+.wl-dl dd small{display:block;font-size:11.5px;font-weight:400;color:var(--ui-text-tertiary)}
+.wl-kv{display:grid;grid-template-columns:96px minmax(0,1fr);gap:4px 12px;font-size:12.5px}
 .wl-kv>span:nth-child(odd){color:var(--ui-text-tertiary)}
-.wl-attempts{margin:16px 0 0;padding:0;list-style:none;position:relative}
+.wl-attempts{margin:0;padding:0;list-style:none;position:relative}
 .wl-attempts:before{content:"";position:absolute;left:5px;top:8px;bottom:8px;width:1px;background:var(--ui-stroke-secondary)}
 .wl-attempts li{position:relative;padding:0 0 12px 24px;font-size:12.5px}
-.wl-attempts li i{position:absolute;left:0;top:4px;width:11px;height:11px;border-radius:50%;background:var(--ui-bg-secondary);border:2px solid var(--ui-text-tertiary)}
-.wl-attempts li.is-ok i{border-color:var(--ui-green)}
-.wl-attempts li.is-stopped i{border-color:var(--ui-red)}
-.wl-attempts li.is-paused i{border-color:var(--ui-yellow)}
-.wl-attempts li.is-running i{border-color:var(--ui-accent)}
-.wl-attempts small{display:block;color:var(--ui-text-tertiary);overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
-.wl-dr .wl-actions{margin-top:6px}
-.wl-log{margin-top:14px}
-.wl-log-head{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-weight:600}
+.wl-attempts li>i{position:absolute;left:0;top:4px;width:11px;height:11px;border-radius:50%;background:var(--ui-bg-elevated);border:2px solid var(--ui-text-tertiary)}
+.wl-attempts li.is-ok>i{border-color:var(--ui-green)}
+.wl-attempts li.is-stopped>i{border-color:var(--ui-red)}
+.wl-attempts li.is-paused>i{border-color:var(--ui-yellow)}
+.wl-attempts li.is-running>i{border-color:var(--ui-accent)}
+.wl-att-line{display:flex;gap:8px;align-items:baseline}
+.wl-att-line span{color:var(--ui-text-tertiary);font-size:12px}
+.wl-att-out{display:flex;gap:8px;font-variant-numeric:tabular-nums}
+.wl-att-out span:first-child{font-weight:600}
+.wl-attempts small{display:block;color:var(--ui-text-tertiary);font-size:12px}
+.wl-log{margin-top:16px}
+.wl-log-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:600}
 .wl-log-head .wl-btn{margin-left:auto}
 .wl-logpre{margin:0;max-height:${BOX.log}px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:10px;border-radius:10px;background:var(--ui-bg-editor);color:var(--ui-text-secondary);line-height:1.45}
-.wl-note{margin-top:14px;border-top:1px solid var(--ui-stroke-tertiary);padding-top:12px}
-.wl-note h4{margin:0 0 8px;font-size:13px;font-weight:600}
-.wl-input{width:100%;background:var(--ui-bg-editor);border:1px solid var(--ui-stroke-secondary);border-radius:9px;padding:7px 10px;color:var(--ui-text-primary);font:inherit}
+.wl-note{margin-top:4px}
+.wl-input{width:100%;background:var(--ui-bg-editor);border:1px solid var(--ui-stroke-secondary);border-radius:9px;padding:8px 10px;color:var(--ui-text-primary);font:inherit}
 .wl-input:focus{outline:none;border-color:var(--ui-accent)}
 textarea.wl-input{min-height:64px;resize:vertical}
 .wl-note .wl-btn{margin-top:8px}
 .wl-notice{position:fixed;right:24px;bottom:24px;z-index:40;display:flex;gap:10px;align-items:flex-start;max-width:420px;padding:12px 14px;border-radius:12px;background:var(--ui-bg-elevated);border:1px solid var(--ui-stroke-secondary);font-size:12.5px}
 .wl-notice .wl-i{stroke:var(--ui-accent);margin-top:2px}
-.wl-fx{padding:16px 20px 20px;min-width:0}
-.wl-fx-bar{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
-.wl-pill{display:inline-flex;align-items:center;gap:8px;padding:5px 12px;border-radius:999px;border:1px solid var(--ui-stroke-tertiary);background:var(--ui-bg-secondary);font-weight:600;white-space:nowrap}
+.wl-fx{padding:12px 24px 16px;min-width:0}
+.wl-fx-bar{display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap}
+.wl-pill{display:inline-flex;align-items:center;gap:8px;padding:4px 12px;border-radius:999px;border:1px solid var(--ui-stroke-tertiary);background:var(--ui-bg-secondary);white-space:nowrap}
 .wl-pill i{width:9px;height:9px;border-radius:50%;background:var(--ui-green)}
 .wl-pill.is-replay i{background:var(--ui-blue)}
-.wl-pill span{color:var(--ui-text-tertiary);font-weight:400}
-.wl-clock{display:flex;flex-direction:column;line-height:1.1;padding-left:12px;border-left:1px solid var(--ui-stroke-tertiary)}
-.wl-clock small{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ui-text-tertiary);font-weight:500}
-.wl-clock b{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
-.wl-stagewrap{position:relative;min-width:0}
-.wl-stage{position:relative;border:1px solid var(--ui-stroke-tertiary);border-radius:14px;overflow:hidden;background:var(--ui-bg-tertiary)}
-.wl-stage>svg{display:block;width:100%;height:auto;aspect-ratio:16/9;max-height:calc(100vh - 230px);min-height:320px}
-.wl-ctrl{display:flex;align-items:center;gap:10px;margin-top:10px;padding:6px 8px;border:1px solid var(--ui-stroke-tertiary);border-radius:12px;background:var(--ui-bg-secondary);min-width:0}
+.wl-pill b{font-weight:600}
+.wl-pill span{color:var(--ui-text-tertiary)}
+.wl-clock{display:flex;align-items:baseline;gap:8px;line-height:1.1;padding-left:12px;border-left:1px solid var(--ui-stroke-tertiary)}
+.wl-clock small{font-size:12px;color:var(--ui-text-tertiary)}
+.wl-clock b{font-size:17px;font-weight:600;font-variant-numeric:tabular-nums}
+.wlf-stage{position:relative;width:min(100%,calc((100vh - 200px) * ${SCENE.w / SCENE.h}));min-width:min(100%,640px);margin:0 auto;border-radius:16px;overflow:hidden;background:linear-gradient(${INK.bg0},${INK.bg1})}
+.wlf-svg{display:block;width:100%;height:auto;font-family:inherit}
+.wl-ctrl{display:flex;align-items:center;gap:10px;width:min(100%,calc((100vh - 200px) * ${SCENE.w / SCENE.h}));min-width:min(100%,640px);margin:8px auto 0;padding:6px 8px;border:1px solid var(--ui-stroke-tertiary);border-radius:12px;background:var(--ui-bg-secondary)}
 .wl-ctrl input[type=range]{flex:1;min-width:80px;accent-color:var(--ui-accent)}
-.wl-tlab{font-size:11px;color:var(--ui-text-tertiary);white-space:nowrap;font-variant-numeric:tabular-nums}
+.wl-tlab{font-size:11.5px;color:var(--ui-text-tertiary);white-space:nowrap;font-variant-numeric:tabular-nums}
 .wl-tlab b{color:var(--ui-text-primary);font-weight:600}
 .wl-root .wl-play{border:0;width:34px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--ui-text-primary);color:var(--ui-bg-chrome)}
 .wl-play .wl-i{fill:currentColor}
 .wl-now{border:1px solid var(--ui-stroke-secondary);height:30px;padding:0 12px;border-radius:9px;background:var(--ui-bg-tertiary);font-weight:600}
 .wl-now.is-live{background:var(--ui-green);border-color:var(--ui-green);color:var(--ui-bg-chrome)}
-.wl-fx-dr{position:absolute;top:12px;right:12px;bottom:12px;width:min(380px,calc(100% - 24px));overflow:auto;z-index:4;padding:18px;border-radius:12px;background:var(--ui-bg-elevated);border:1px solid var(--ui-stroke-secondary);overflow-wrap:anywhere}
-.wl-fx-dr.wl-dr{position:absolute;max-height:none}
-.wl-floor{fill:var(--ui-bg-secondary);stroke:var(--ui-stroke-tertiary)}
-.wl-gridline{stroke:var(--ui-stroke-quaternary);stroke-width:1}
-.wl-wall{fill:var(--ui-bg-quaternary)}
-.wl-sky{fill:color-mix(in srgb,var(--ui-blue) 30%,var(--ui-bg-tertiary))}
-.wl-zone{fill:var(--ui-bg-tertiary);stroke:var(--ui-stroke-secondary);stroke-width:2;stroke-dasharray:6 6}
-.wl-door{fill:var(--ui-stroke-primary)}
-.wl-dock{fill:color-mix(in srgb,var(--ui-orange) 13%,var(--ui-bg-secondary))}
-.wl-plank{stroke:color-mix(in srgb,var(--ui-orange) 20%,transparent);stroke-width:1.5}
-.wl-bed{fill:none;stroke:color-mix(in srgb,var(--ui-text-primary) 34%,var(--ui-bg-chrome));stroke-width:30;stroke-linejoin:round}
-.wl-bed-in{fill:none;stroke:color-mix(in srgb,var(--ui-text-primary) 20%,var(--ui-bg-chrome));stroke-width:22;stroke-linejoin:round}
-.wl-slats{fill:none;stroke:color-mix(in srgb,var(--ui-text-primary) 16%,transparent);stroke-width:22;stroke-dasharray:3 8;stroke-linejoin:round;animation:wl-run 1.1s linear infinite;animation-play-state:paused}
-.wl-fxsvg[data-moving="1"] .wl-slats{animation-play-state:running}
-.wl-redbed{fill:none;stroke:color-mix(in srgb,var(--ui-red) 28%,var(--ui-bg-chrome));stroke-width:30}
-.wl-redslats{fill:none;stroke:var(--ui-yellow);stroke-width:22;stroke-dasharray:9 9;opacity:.85;animation:wl-run 1.4s linear infinite;animation-play-state:paused}
-.wl-fxsvg[data-jam="1"] .wl-redslats{animation-play-state:running}
-.wl-cable{fill:none;stroke:var(--ui-stroke-primary);stroke-width:4;stroke-linecap:round}
-.wl-flabel{font-size:12px;font-weight:600;letter-spacing:1.6px;fill:var(--ui-text-tertiary)}
-.wl-m{cursor:pointer;outline:none}
-.wl-m-focus{fill:none;stroke:transparent;stroke-width:2;stroke-dasharray:5 4}
-.wl-m:hover .wl-m-focus,.wl-m:focus-visible .wl-m-focus{stroke:var(--ui-accent)}
-.wl-m-body{fill:var(--ui-bg-elevated);stroke:var(--ui-stroke-secondary)}
-.wl-m-dark{fill:color-mix(in srgb,var(--ui-text-primary) 70%,var(--ui-bg-chrome))}
-.wl-vent{fill:color-mix(in srgb,var(--ui-bg-chrome) 35%,transparent)}
-.wl-rod{stroke:var(--ui-text-tertiary);stroke-width:5;stroke-linecap:round}
-.wl-head,.wl-stamp{transform-box:view-box}
-.wl-head.is-work{animation:wl-press 1.05s ease-in-out infinite}
-.wl-stamp.is-work{animation:wl-press 1.4s ease-in-out infinite}
-.wl-head.is-jam{transform:translateY(12px)}
-.wl-lamp{fill:color-mix(in srgb,var(--ui-green) 40%,var(--ui-bg-elevated))}
-.wl-lamp.is-work{fill:var(--ui-green)}
-.wl-lamp.is-crash{fill:var(--ui-red);animation:wl-blink .52s steps(1) infinite}
-.wl-lamp.is-pause{fill:var(--ui-yellow);animation:wl-blink 1s steps(1) infinite}
-.wl-hz-a{fill:var(--ui-yellow)}
-.wl-hz-b{fill:color-mix(in srgb,var(--ui-text-primary) 80%,var(--ui-bg-chrome))}
-.wl-mname{font-size:10px;font-weight:600;letter-spacing:1.2px;fill:var(--ui-text-tertiary)}
-.wl-mnum{font-size:9px;font-weight:600;fill:var(--ui-bg-chrome)}
-.wl-glass{fill:color-mix(in srgb,var(--ui-purple) 8%,transparent);stroke:color-mix(in srgb,var(--ui-purple) 55%,transparent);stroke-width:2}
-.wl-glass.is-work{fill:color-mix(in srgb,var(--ui-purple) 22%,transparent)}
-.wl-beam{fill:var(--ui-purple);transform-box:view-box;animation:wl-beam 1.5s ease-in-out infinite}
-.wl-dome{fill:color-mix(in srgb,var(--ui-cyan) 18%,transparent);stroke:color-mix(in srgb,var(--ui-cyan) 70%,transparent);stroke-width:3}
-.wl-liquid{fill:color-mix(in srgb,var(--ui-cyan) 45%,transparent)}
-.wl-glassline{fill:none;stroke:var(--ui-text-primary);stroke-width:4;stroke-linecap:round}
-.wl-ink{fill:var(--ui-text-tertiary)}
-.wl-pkg{cursor:pointer;outline:none;transition:transform .7s cubic-bezier(.16,1,.3,1)}
-.wl-pkg-sh{fill:color-mix(in srgb,var(--ui-bg-chrome) 50%,transparent)}
-.wl-pkg-lid{fill:color-mix(in srgb,var(--ui-orange) 38%,var(--ui-bg-elevated))}
-.wl-pkg-body{fill:color-mix(in srgb,var(--ui-orange) 62%,var(--ui-bg-elevated))}
-.wl-pkg-tape{fill:color-mix(in srgb,var(--ui-orange) 80%,var(--ui-bg-chrome))}
-.wl-pkg.is-scrap{opacity:.8}
-.wl-pkg.is-scrap .wl-pkg-lid,.wl-pkg.is-scrap .wl-pkg-body{fill:var(--ui-bg-quaternary)}
-.wl-pkg-sel{fill:none;stroke:var(--ui-text-primary);stroke-width:2}
-.wl-pkg-focus{fill:none;stroke:transparent;stroke-width:2}
-.wl-pkg:focus-visible .wl-pkg-focus,.wl-pkg:hover .wl-pkg-focus{stroke:var(--ui-accent)}
-.wl-bang{fill:var(--ui-red)}
-.wl-bang.is-pause{fill:var(--ui-yellow)}
-.wl-bang-t{font-size:9px;font-weight:700;fill:var(--ui-bg-chrome)}
-.wl-lock{fill:var(--ui-text-primary)}
-.wl-lock-s{fill:none;stroke:var(--ui-bg-chrome);stroke-width:1.6}
-.wl-bay{fill:var(--ui-bg-tertiary)}
-.wl-bay.is-on{fill:color-mix(in srgb,var(--ui-red) 12%,var(--ui-bg-secondary))}
-.wl-bay-edge{fill:none;stroke:var(--ui-stroke-secondary);stroke-width:10}
-.wl-bay-edge.is-on{stroke:var(--ui-red)}
-.wl-ants{fill:none;stroke:color-mix(in srgb,var(--ui-text-primary) 75%,var(--ui-bg-chrome));stroke-width:10;stroke-dasharray:10 10;animation:wl-ants 1.2s linear infinite}
-.wl-binhead{fill:var(--ui-stroke-secondary)}
-.wl-binhead.is-on{fill:var(--ui-red)}
-.wl-binhead-t{font-size:13px;font-weight:600;letter-spacing:1px;fill:var(--ui-bg-chrome)}
-.wl-clear{font-size:13px;font-weight:500;fill:var(--ui-text-tertiary)}
-.wl-ring{fill:none;stroke:var(--ui-red);stroke-width:3;transform-box:fill-box;transform-origin:center;animation:wl-ring 1.4s ease-out infinite}
-.wl-halo{fill:color-mix(in srgb,var(--ui-red) 14%,transparent)}
-.wl-smoke circle{fill:var(--ui-text-tertiary);opacity:.3;transform-box:fill-box;transform-origin:center;animation:wl-smoke 2.4s ease-out infinite}
-.wl-smoke circle:nth-child(2){animation-delay:.8s}
-.wl-smoke circle:nth-child(3){animation-delay:1.6s}
-.wl-fo{overflow:visible}
-.wl-tag{height:100%;display:flex;align-items:center;justify-content:center;pointer-events:none}
-.wl-tag span{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:2px 10px;border-radius:11px;background:var(--ui-bg-elevated);border:1px solid var(--ui-stroke-secondary);font-size:11px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wl-tag i{width:8px;height:8px;border-radius:50%;flex:none}
-.wl-tag.is-crash span{background:var(--ui-red);border-color:var(--ui-red);color:var(--ui-bg-chrome)}
-.wl-tag.is-pause span{background:var(--ui-yellow);border-color:var(--ui-yellow);color:var(--ui-bg-chrome)}
-.wl-callout{height:100%;display:flex;flex-direction:column;justify-content:center;gap:1px;padding:6px 12px 6px 14px;border-radius:14px;background:var(--ui-bg-elevated);border:1px solid var(--ui-stroke-secondary);border-left:6px solid var(--ui-red);cursor:pointer;min-width:0;line-height:1.3;color:var(--ui-text-primary)}
-.wl-callout.is-pause{border-left-color:var(--ui-yellow)}
-.wl-callout small{font-size:10px;font-weight:600;letter-spacing:1.2px;color:var(--ui-text-secondary)}
-.wl-callout b{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wl-callout span{font-size:12px;color:var(--ui-text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wl-callout em{font-style:normal;font-size:12px;font-weight:600}
-.wl-sign{height:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 14px;border-radius:12px;background:var(--ui-bg-elevated);border:1px solid var(--ui-stroke-tertiary);color:var(--ui-text-primary)}
-.wl-sign b{font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}
-.wl-sign span{text-align:right;font-size:12px;color:var(--ui-text-tertiary);line-height:1.3}
-.wl-gatein{font-size:9px;font-weight:600;fill:var(--ui-text-tertiary)}
-.wl-lampin{fill:var(--ui-bg-quaternary)}
-.wl-lampin.is-on{fill:var(--ui-green)}
-.wl-overflow{font-size:12px;font-weight:600;fill:var(--ui-text-secondary)}
+.wlf-zone-l{font-size:${FS.zone}px;font-weight:600;letter-spacing:1.6px}
+.wlf-name{font-size:${FS.name}px;font-weight:600;letter-spacing:1.2px}
+.wlf-note{font-size:${FS.note}px;font-weight:500}
+.wlf-num{font-size:${FS.num}px;font-weight:700}
+.wlf-sign{font-size:${FS.sign}px;font-weight:600;font-variant-numeric:tabular-nums}
+.wlf-binhead{font-size:${FS.note}px;font-weight:600;letter-spacing:1px}
+.wlf-slats{opacity:0}
+.wlf-svg[data-moving="1"] .wlf-slats{opacity:1;animation:wlf-run 1.1s linear infinite}
+.wlf-svg[data-moving="1"] .wlf-redslats{animation:wlf-run 1.4s linear infinite}
+.wlf-m{cursor:pointer;outline:none}
+.wlf-m-focus{fill:none;stroke:transparent;stroke-width:2;stroke-dasharray:5 4}
+.wlf-m:hover .wlf-m-focus,.wlf-m:focus-visible .wlf-m-focus{stroke:${INK.ink}}
+.wlf-press,.wlf-stamp,.wlf-beam,.wlf-glass{transform-box:view-box}
+.wlf-press.is-work{animation:wlf-press 1.05s ease-in-out infinite}
+.wlf-press.is-jam{transform:translateY(14px)}
+.wlf-stamp.is-work{animation:wlf-stamp 1.43s ease-in-out infinite}
+.wlf-stamp.is-jam{transform:translateY(8px)}
+.wlf-arm{transform-box:fill-box;transform-origin:top;transform:scaleY(.05)}
+.wlf-arm.is-work{animation:wlf-arm 1.43s ease-in-out infinite}
+.wlf-arm.is-jam{transform:scaleY(.35)}
+.wlf-beam{animation:wlf-beam 1.5s ease-in-out infinite}
+.wlf-glass.is-work{animation:wlf-glass 3.9s linear infinite;transform-origin:444px 752px}
+.wlf-lamp-c{fill:${INK.lampIdle}}
+.wlf-lamp.is-work .wlf-lamp-c{fill:${INK.lampWork};filter:drop-shadow(0 0 4px ${INK.lampWork})}
+.wlf-lamp.is-crash .wlf-lamp-c{fill:${INK.lampRed};animation:wlf-crash .52s steps(1) infinite;filter:drop-shadow(0 0 6px ${INK.lampRed})}
+.wlf-lamp.is-pause .wlf-lamp-c{fill:${INK.lampAmber};animation:wlf-pause 1s steps(1) infinite}
+.wlf-pkg{cursor:pointer;outline:none;transition:transform .7s cubic-bezier(.16,1,.3,1)}
+.wlf-pkg.is-scrap{opacity:.55}
+.wlf-pkg-focus{fill:none;stroke:transparent;stroke-width:2}
+.wlf-pkg:hover .wlf-pkg-focus,.wlf-pkg:focus-visible .wlf-pkg-focus{stroke:${INK.ink}}
+.wlf-ring{transform-box:fill-box;transform-origin:center;animation:wlf-ring 2.8s ease-out infinite}
+.wlf-smoke circle{opacity:.3;transform-box:fill-box;transform-origin:center;animation:wlf-smoke 2.4s ease-out infinite}
+.wlf-smoke circle:nth-child(2){animation-delay:.8s}
+.wlf-smoke circle:nth-child(3){animation-delay:1.6s}
+.wlf-fo{overflow:visible}
+.wlf-tag{height:100%;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.wlf-tag.is-start{justify-content:flex-start}
+.wlf-tag span{display:inline-flex;align-items:center;gap:8px;max-width:100%;height:28px;padding:0 14px 0 10px;border-radius:14px;background:${INK.card};color:${INK.ink};box-shadow:0 3px 8px ${INK.crateShadow};font-size:${FS.tag}px;font-weight:500;white-space:nowrap}
+.wlf-tag em{font-style:normal;overflow:hidden;text-overflow:ellipsis}
+.wlf-tag i{width:9px;height:9px;border-radius:50%;flex:none}
+.wlf-tag.is-crash span{background:${INK.red};color:${INK.white};padding-left:14px}
+.wlf-tag.is-pause span{background:${INK.amber};color:${INK.ink};padding-left:14px}
+.wlf-call{height:100%;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:8px 14px 8px 20px;border-radius:14px;background:${INK.card};color:${INK.ink};box-shadow:0 6px 18px ${INK.crateShadow},inset 6px 0 0 ${INK.red};cursor:pointer;min-width:0;line-height:1.3}
+.wlf-call.is-pause{box-shadow:0 6px 18px ${INK.crateShadow},inset 6px 0 0 ${INK.amber}}
+.wlf-call:focus-visible{outline:2px solid ${INK.ink};outline-offset:2px}
+.wlf-call small{font-size:${FS.note}px;font-weight:600;letter-spacing:1.2px;color:${INK.redText}}
+.wlf-call.is-pause small,.wlf-call.is-pause em{color:${INK.amberText}}
+.wlf-call b{font-size:18px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wlf-call span{font-size:${FS.note}px;color:${INK.mute};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.wlf-call em{font-style:normal;font-size:${FS.note}px;font-weight:600;color:${INK.redText}}
 .wl-scrim{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:24px;background:color-mix(in srgb,var(--ui-bg-chrome) 72%,transparent)}
-.wl-dlg{width:min(620px,100%);max-height:min(${BOX.dialog}px,100%);overflow:auto;padding:20px 22px;border-radius:14px;background:var(--ui-bg-elevated);border:1px solid var(--ui-stroke-secondary);color:var(--ui-text-primary);overflow-wrap:anywhere}
-.wl-dlg h2{margin:0 0 6px;font-size:16px;font-weight:600}
-.wl-dlg p{margin:6px 0;color:var(--ui-text-secondary)}
+.wl-dlg{width:min(620px,100%);max-height:min(${BOX.dialog}px,100%);overflow:auto;padding:20px 24px;border-radius:14px;background:var(--ui-bg-elevated);border:1px solid var(--ui-stroke-secondary);color:var(--ui-text-primary);overflow-wrap:anywhere}
+.wl-dlg h2{margin:0 0 8px;font-size:16px;font-weight:600}
+.wl-dlg p{margin:8px 0;color:var(--ui-text-secondary)}
 .wl-dlg .wl-task{font-weight:600;color:var(--ui-text-primary)}
-.wl-steps{margin:10px 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;counter-reset:wl}
+.wl-steps{margin:12px 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
 .wl-steps li{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:8px;align-items:start;font-size:12.5px}
-.wl-steps .wl-st{font-size:11px;color:var(--ui-text-tertiary);white-space:nowrap}
+.wl-steps .wl-st{font-size:11.5px;color:var(--ui-text-tertiary);white-space:nowrap}
 .wl-steps .wl-st.is-failed{color:var(--ui-text-primary);font-weight:600}
 .wl-steps .wl-serr{grid-column:2/-1;font-size:12px;color:var(--ui-text-secondary)}
 .wl-mark{width:10px;height:10px;border-radius:50%;margin-top:4px;border:2px solid var(--ui-stroke-primary)}
@@ -946,16 +1030,19 @@ textarea.wl-input{min-height:64px;resize:vertical}
 .wl-field .wl-input{width:140px}
 .wl-quote{white-space:pre-wrap;padding:10px 12px;border-radius:10px;background:var(--ui-bg-secondary);max-height:200px;overflow:auto}
 .wl-callnote{padding:8px 10px;border-radius:8px;background:var(--ui-bg-secondary);font-size:12.5px}
-.wl-result{margin-top:10px;padding:8px 10px;border-radius:8px;border-left:3px solid var(--ui-green);background:var(--ui-bg-secondary)}
-.wl-result.is-failed{border-left-color:var(--ui-red)}
+.wl-result{margin-top:12px;padding:8px 10px;border-radius:8px;border:1px solid color-mix(in srgb,var(--ui-green) 50%,transparent);background:var(--ui-bg-secondary)}
+.wl-result.is-failed{border-color:color-mix(in srgb,var(--ui-red) 50%,transparent)}
 .wl-dlg-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:16px}
-@keyframes wl-run{to{stroke-dashoffset:-22}}
-@keyframes wl-press{0%,62%,100%{transform:translateY(0)}22%,30%{transform:translateY(20px)}}
-@keyframes wl-beam{0%,100%{transform:translateX(0)}50%{transform:translateX(40px)}}
-@keyframes wl-blink{50%{opacity:.35}}
-@keyframes wl-ants{to{stroke-dashoffset:-40}}
-@keyframes wl-ring{0%{transform:scale(1);opacity:.6}100%{transform:scale(2.1);opacity:0}}
-@keyframes wl-smoke{0%{transform:translate(0,0) scale(.6);opacity:.45}100%{transform:translate(18px,-64px) scale(1.9);opacity:0}}
+@keyframes wlf-run{to{stroke-dashoffset:-22}}
+@keyframes wlf-press{0%,62%,100%{transform:translateY(0)}22%,30%{transform:translateY(20px)}}
+@keyframes wlf-stamp{0%,62%,100%{transform:translateY(0)}18%,32%{transform:translateY(24px)}}
+@keyframes wlf-arm{0%,62%,100%{transform:scaleY(.05)}18%,32%{transform:scaleY(1)}}
+@keyframes wlf-beam{0%,100%{transform:translateX(0)}50%{transform:translateX(40px)}}
+@keyframes wlf-glass{0%{transform:translate(4px,0)}25%{transform:translate(0,4px)}50%{transform:translate(-4px,0)}75%{transform:translate(0,-4px)}100%{transform:translate(4px,0)}}
+@keyframes wlf-crash{50%{fill:${INK.lampAmber}}}
+@keyframes wlf-pause{50%{fill:${INK.lampAmberDim}}}
+@keyframes wlf-ring{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.5);opacity:0}}
+@keyframes wlf-smoke{0%{transform:translate(0,0) scale(.6);opacity:.45}100%{transform:translate(18px,-64px) scale(1.9);opacity:0}}
 @media (prefers-reduced-motion:reduce){.wl-root *,.wl-root *::before,.wl-root *::after{animation:none!important;transition:none!important}}
 `
 
@@ -969,11 +1056,18 @@ function StatusPill({ task, t }) {
   )
 }
 
+const oneLine = (s, max = 160) => {
+  const line = String(s || '').split('\n')[0].replace(/\s+/g, ' ').trim()
+  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line
+}
+
+const DUMP = /traceback|last output|^\s*(?:file |at )|\\x1b|\u001b/i
+
 function reasonOf(task, t) {
-  const r = String(task.block_reason_plain || '').trim()
-  if (r) return r
-  const e = String(task.error_plain || '').split('\n')[0].trim()
-  return e || t('wingline.needs.reasonUnknown')
+  const plain = oneLine(task.block_reason_plain)
+  if (plain) return plain
+  const first = oneLine(task.error_plain)
+  return first && !DUMP.test(first) ? first : t('wingline.needs.reasonUnknown')
 }
 
 function retriesText(task, t) {
@@ -981,10 +1075,21 @@ function retriesText(task, t) {
   return isNum(task.max_retries) ? t('wingline.needs.retries', used, task.max_retries) : t('wingline.needs.retriesNoMax', used)
 }
 
+function RawError({ text, t }) {
+  const raw = stripAnsi(text).trim()
+  if (!raw) return null
+  return h(
+    'details',
+    { className: 'wl-rawbox', 'data-raw': '1', onClick: e => e.stopPropagation() },
+    h('summary', null, t('wingline.raw')),
+    h('pre', { className: 'wl-rawtext wl-mono' }, raw)
+  )
+}
+
 function NeedsYou({ list, selId, onSelect, onAction, now, t }) {
   return h(
     'section',
-    { 'aria-labelledby': 'wl-needs-h' },
+    { className: 'wl-sec is-needs', 'aria-labelledby': 'wl-needs-h' },
     h('h2', { className: 'wl-h2', id: 'wl-needs-h' }, t('wingline.needs.title'), list.length ? h('small', null, t('wingline.needs.count', list.length)) : null),
     list.length
       ? h(
@@ -996,30 +1101,31 @@ function NeedsYou({ list, selId, onSelect, onAction, now, t }) {
               'article',
               {
                 key: task.id,
-                className: `wl-panel wl-attn${task.id === selId ? ' is-sel' : ''}`,
+                className: `wl-attn${task.id === selId ? ' is-sel' : ''}`,
                 'data-id': task.id,
                 onClick: () => onSelect(task.id)
               },
-              h('div', { className: 'wl-badge' }, h(Icon, { name: 'clock', size: 20 })),
+              h('div', { className: 'wl-badge' }, h(Icon, { name: 'alert', size: 18 })),
               h(
                 'div',
-                { style: { minWidth: 0 } },
+                { className: 'wl-attn-body' },
                 h('h3', null, task.title),
-                h('p', { className: 'wl-reason' }, reasonOf(task, t)),
+                h('p', { className: 'wl-reason', 'data-reason': '1' }, reasonOf(task, t)),
                 h(
                   'div',
                   { className: 'wl-facts' },
-                  h('span', null, h(Icon, { name: 'alert', size: 13 }), retriesText(task, t)),
-                  h('span', null, h(Icon, { name: 'clock', size: 13 }), t('wingline.needs.worked', fmtDur(t, workSeconds(task, now)))),
-                  h('span', null, h(Icon, { name: 'retry', size: 13 }), t('wingline.needs.attempts', runsOf(task).length)),
-                  h('span', null, h(Icon, { name: 'coin', size: 13 }), money(task.cost?.usd)),
-                  h('span', null, h(Icon, { name: 'user', size: 13 }), task.assignee || '—'),
+                  h('span', null, retriesText(task, t)),
+                  h('span', null, t('wingline.needs.worked', fmtDur(t, workSeconds(task, now)))),
+                  h('span', null, t('wingline.needs.attempts', runsOf(task).length)),
+                  h('span', null, money(task.cost?.usd)),
                   r && isNum(r.ended_at) ? h('span', null, t('wingline.needs.stopped', fmtWhen(r.ended_at))) : null
                 ),
+                h(RawError, { text: task.error_raw || task.error_plain, t }),
                 h(
                   'div',
                   { className: 'wl-actions', onClick: e => e.stopPropagation() },
                   h(Btn, { id: 'retry', icon: 'retry', kind: 'primary', label: t('wingline.act.retry'), onClick: () => onAction('retry', task) }),
+                  h(Btn, { id: 'details', icon: 'info', label: t('wingline.act.details'), onClick: () => onSelect(task.id) }),
                   h(Btn, { id: 'log', icon: 'log', label: t('wingline.act.log'), onClick: () => onAction('log', task) }),
                   h(Btn, { id: 'chat', icon: 'chat', label: t('wingline.act.chat'), onClick: () => onAction('chat', task) }),
                   h(Btn, { id: 'archive', icon: 'archive', kind: 'ghost', label: t('wingline.act.archive'), onClick: () => onAction('archive', task) })
@@ -1028,14 +1134,30 @@ function NeedsYou({ list, selId, onSelect, onAction, now, t }) {
             )
           })
         )
-      : h('div', { className: 'wl-panel wl-empty' }, h(Icon, { name: 'info' }), t('wingline.needs.none'))
+      : h('p', { className: 'wl-slim' }, h(Icon, { name: 'info' }), t('wingline.needs.none'))
   )
 }
 
 function WorkingNow({ list, tasks, selId, onSelect, now, t }) {
-  let body
-  if (list.length) {
-    body = h(
+  if (!list.length) {
+    const ends = tasks.flatMap(x => runsOf(x).map(r => r.ended_at)).filter(isNum)
+    return h(
+      'section',
+      { className: 'wl-sec is-idle', 'aria-labelledby': 'wl-work-h', 'data-idle': '1' },
+      h(
+        'p',
+        { className: 'wl-slim' },
+        h(Icon, { name: 'moon' }),
+        h('b', { id: 'wl-work-h' }, t('wingline.working.title')),
+        h('span', null, t('wingline.working.none'), ' ', ends.length ? t('wingline.working.lastStop', fmtWhen(Math.max(...ends))) : t('wingline.working.nothingYet'))
+      )
+    )
+  }
+  return h(
+    'section',
+    { className: 'wl-sec', 'aria-labelledby': 'wl-work-h' },
+    h('h2', { className: 'wl-h2', id: 'wl-work-h' }, t('wingline.working.title')),
+    h(
       'div',
       { className: 'wl-work' },
       list.map(task => {
@@ -1049,52 +1171,44 @@ function WorkingNow({ list, tasks, selId, onSelect, now, t }) {
           { key: task.id, className: `wl-panel wl-wrow${task.id === selId ? ' is-sel' : ''}`, 'data-id': task.id, onClick: () => onSelect(task.id) },
           h('div', { className: 'wl-wtitle' }, h('span', { className: 'wl-role', style: { background: ROLE_TONE[roleOf(task)] } }), h('span', null, task.title)),
           h('div', { className: 'wl-wmeta' }, t('wingline.working.elapsed', fmtDur(t, elapsed)), limit ? ` · ${t('wingline.working.limit', fmtDur(t, limit))}` : ''),
-          h(
-            'div',
-            { className: 'wl-wact' },
-            act ? `${act.text}${isNum(act.at) ? ` · ${t('wingline.working.ago', fmtDur(t, Math.max(0, now - act.at)))}` : ''}` : t('wingline.working.noActivity')
-          ),
+          h('div', { className: 'wl-wact' }, act ? `${act.text}${isNum(act.at) ? ` · ${t('wingline.working.ago', fmtDur(t, Math.max(0, now - act.at)))}` : ''}` : t('wingline.working.noActivity')),
           limit ? h('div', { className: 'wl-bar' }, h('i', { style: { width: `${Math.min(100, (elapsed / limit) * 100)}%` } })) : null
         )
       })
     )
-  } else {
-    const ends = tasks.flatMap(x => runsOf(x).map(r => r.ended_at)).filter(isNum)
-    body = h(
-      'div',
-      { className: 'wl-panel wl-empty' },
-      h(Icon, { name: 'moon' }),
-      h('div', null, t('wingline.working.none'), ' ', ends.length ? t('wingline.working.lastStop', fmtWhen(Math.max(...ends))) : t('wingline.working.nothingYet'))
-    )
-  }
-  return h('section', { 'aria-labelledby': 'wl-work-h' }, h('h2', { className: 'wl-h2', id: 'wl-work-h' }, t('wingline.working.title')), body)
+  )
 }
 
-function Pipeline({ tasks, selId, onSelect, now, t }) {
-  const lay = useMemo(() => pipelineLayout(tasks), [tasks])
+function Pipeline({ groups, selId, onSelect, now, t }) {
+  const lays = useMemo(() => groups.map(g => ({ g, lay: groupLayout(g) })), [groups])
   return h(
     'section',
-    { 'aria-labelledby': 'wl-pipe-h' },
+    { className: 'wl-sec', 'aria-labelledby': 'wl-pipe-h' },
     h('h2', { className: 'wl-h2', id: 'wl-pipe-h' }, t('wingline.pipe.title'), h('small', null, t('wingline.pipe.sub'))),
-    lay.nodes.length
-      ? h(
-          'div',
-          { className: 'wl-panel wl-pipe' },
+    h(
+      'div',
+      { className: 'wl-pipes' },
+      lays.map(({ g, lay }) =>
+        h(
+          'figure',
+          { key: `${g.kind}-${g.tasks[0].id}`, className: 'wl-pipe', 'data-group': g.name, 'data-kind': g.kind },
+          h(
+            'figcaption',
+            null,
+            h('b', null, g.name),
+            h('span', null, t('wingline.tl.group', g.tasks.length, fmtDur(t, g.tasks.reduce((s, x) => s + workSeconds(x, now), 0)), money(g.tasks.reduce((s, x) => s + (x.cost?.usd || 0), 0))))
+          ),
           h(
             'svg',
-            { width: lay.width, height: lay.height, viewBox: `0 0 ${lay.width} ${lay.height}`, role: 'group', 'aria-label': t('wingline.pipe.title') },
-            h(
-              'defs',
-              null,
-              h('marker', { id: 'wl-ar', viewBox: '0 0 10 10', refX: 8, refY: 5, markerWidth: 6, markerHeight: 6, orient: 'auto' }, h('path', { d: 'M0,1L9,5L0,9z', className: 'wl-arrow' }))
-            ),
+            { width: lay.width, height: lay.height, viewBox: `0 0 ${lay.width} ${lay.height}`, role: 'group', 'aria-label': g.name },
+            h('defs', null, h('marker', { id: `wl-ar-${g.tasks[0].id}`, viewBox: '0 0 10 10', refX: 8, refY: 5, markerWidth: 6, markerHeight: 6, orient: 'auto' }, h('path', { d: 'M0,1L9,5L0,9z', className: 'wl-arrow' }))),
             lay.edges.map(e => {
-              const x1 = e.from.x + NODE.w
-              const y1 = e.from.y + NODE.h / 2
-              const x2 = e.to.x - 4
-              const y2 = e.to.y + NODE.h / 2
+              const x1 = e.a.x + NODE.w
+              const y1 = e.a.y + NODE.h / 2
+              const x2 = e.b.x - 3
+              const y2 = e.b.y + NODE.h / 2
               const mx = (x1 + x2) / 2
-              return h('path', { key: e.key, className: 'wl-edge', d: `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`, markerEnd: 'url(#wl-ar)' })
+              return h('path', { key: e.key, className: `wl-edge is-${e.kind}`, 'data-edge': e.kind, d: `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`, markerEnd: `url(#wl-ar-${g.tasks[0].id})` })
             }),
             lay.nodes.map(n => {
               const task = n.task
@@ -1118,34 +1232,33 @@ function Pipeline({ tasks, selId, onSelect, now, t }) {
                     }
                   }
                 },
-                h('rect', { className: 'wl-card', width: NODE.w, height: NODE.h, rx: 10 }),
-                h('rect', { x: 12, y: 13, width: 8, height: 8, rx: 2, style: { fill: ROLE_TONE[roleOf(task)] } }),
-                h('circle', { cx: NODE.w - 14, cy: 17, r: 4, style: { fill: tone } }),
+                h('rect', { className: 'wl-card', width: NODE.w, height: NODE.h, rx: 9 }),
+                h('rect', { x: 10, y: 12, width: 8, height: 8, rx: 2, style: { fill: ROLE_TONE[roleOf(task)] } }),
+                h('circle', { cx: NODE.w - 12, cy: 16, r: 4, style: { fill: tone } }),
                 h(
                   'foreignObject',
-                  { x: 0, y: 0, width: NODE.w - 22, height: NODE.h },
-                  h(
-                    'div',
-                    { className: 'wl-nt' },
-                    h('b', null, n.label),
-                    h('span', null, `${fmtDur(t, workSeconds(task, now))} · ${money(task.cost?.usd)}${r ? ` · ${t(`wingline.run.${runKind(r)}`)}` : ''}`)
-                  )
+                  { x: 0, y: 0, width: NODE.w - 20, height: NODE.h },
+                  h('div', { className: 'wl-nt' }, h('b', null, n.label), h('span', null, `${fmtDur(t, workSeconds(task, now))} · ${money(task.cost?.usd)}${r ? ` · ${t(`wingline.run.${runKind(r)}`)}` : ''}`))
                 )
               )
             })
           )
         )
-      : h('div', { className: 'wl-panel wl-empty' }, h(Icon, { name: 'info' }), t('wingline.pipe.none'))
+      )
+    ),
+    h('p', { className: 'wl-key' }, h('span', null, h('i', { className: 'is-dep' }), t('wingline.pipe.dep')), h('span', null, h('i', { className: 'is-seq' }), t('wingline.pipe.seq')))
   )
 }
 
-function Timeline({ tasks, axis, selId, onSelect, filter, now, t }) {
-  const groups = useMemo(() => timelineGroups(tasks, t), [tasks, t])
+const TICKS = 5
+
+function Timeline({ groups, axis, selId, onSelect, filter, now, t }) {
   const pct = x => (axis.toC(x) / axis.span) * 100
   const allowed = filter ? FILTERS[filter] : null
+  const ticks = Array.from({ length: TICKS }, (_, k) => (k + 0.5) * (100 / TICKS))
   return h(
     'section',
-    { 'aria-labelledby': 'wl-tl-h' },
+    { className: 'wl-sec', 'aria-labelledby': 'wl-tl-h' },
     h('h2', { className: 'wl-h2', id: 'wl-tl-h' }, t('wingline.tl.title'), h('small', null, t('wingline.tl.sub'))),
     h(
       'div',
@@ -1157,9 +1270,9 @@ function Timeline({ tasks, axis, selId, onSelect, filter, now, t }) {
         h(
           'div',
           { className: 'wl-ticks' },
-          [0, 1, 2, 3, 4].map(k => h('span', { key: k, style: { left: `${k * 25}%` } }, fmtWhen(axis.toR((axis.span * k) / 4))))
+          ticks.map(p => h('span', { key: p, 'data-tick': p, style: { left: `${p}%` } }, fmtWhen(axis.toR((axis.span * p) / 100))))
         ),
-        h('span', { style: { textAlign: 'right' } }, t('wingline.tl.spent'))
+        h('span', { className: 'wl-tl-cost' }, t('wingline.tl.spent'))
       ),
       h(
         'div',
@@ -1167,8 +1280,13 @@ function Timeline({ tasks, axis, selId, onSelect, filter, now, t }) {
         groups.map(g =>
           h(
             'div',
-            { key: `g-${g.name}-${g.tasks[0].id}`, className: 'wl-tl-groupbox' },
-            h('div', { className: 'wl-tl-group' }, h('span', null, g.name), h('em', null, t('wingline.tl.group', g.tasks.length, money(g.tasks.reduce((s, x) => s + (x.cost?.usd || 0), 0))))),
+            { key: `g-${g.kind}-${g.tasks[0].id}`, className: 'wl-tl-groupbox', 'data-group': g.name },
+            h(
+              'div',
+              { className: 'wl-tl-group' },
+              h('span', null, g.name),
+              h('em', null, t('wingline.tl.group', g.tasks.length, fmtDur(t, g.tasks.reduce((s, x) => s + workSeconds(x, now), 0)), money(g.tasks.reduce((s, x) => s + (x.cost?.usd || 0), 0))))
+            ),
             g.tasks.map(task =>
               h(
                 'div',
@@ -1181,14 +1299,17 @@ function Timeline({ tasks, axis, selId, onSelect, filter, now, t }) {
                   'aria-label': task.title,
                   onClick: () => onSelect(task.id),
                   onKeyDown: e => {
-                    if (e.key === 'Enter') onSelect(task.id)
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      onSelect(task.id)
+                    }
                   }
                 },
-                h('div', { className: 'wl-tl-name' }, h('span', { className: 'wl-role', style: { background: ROLE_TONE[roleOf(task)] } }), h('span', null, task.title)),
+                h('div', { className: 'wl-tl-name' }, h('span', { className: 'wl-role', style: { background: ROLE_TONE[roleOf(task)] } }), h('span', null, shortTitle(task, g.other ? '' : g.name))),
                 h(
                   'div',
                   { className: 'wl-track' },
-                  h('div', { className: 'wl-grid' }),
+                  ticks.map(p => h('i', { key: p, className: 'wl-gridline', style: { left: `${p}%` } })),
                   runsOf(task).map((r, i) => {
                     const a = pct(r.started_at)
                     const b = pct(runEnd(r, now))
@@ -1196,7 +1317,8 @@ function Timeline({ tasks, axis, selId, onSelect, filter, now, t }) {
                       key: `${task.id}-${r.id ?? i}`,
                       className: `wl-run wl-k-${runKind(r)}`,
                       'data-kind': runKind(r),
-                      style: { left: `${a}%`, width: `${Math.max(0.5, b - a)}%` }
+                      title: `${t(`wingline.run.${runKind(r)}`)} · ${fmtDur(t, runEnd(r, now) - r.started_at)}`,
+                      style: { left: `${a}%`, width: `${Math.max(0, b - a)}%` }
                     })
                   })
                 ),
@@ -1210,19 +1332,22 @@ function Timeline({ tasks, axis, selId, onSelect, filter, now, t }) {
         'div',
         { className: 'wl-legend' },
         ['ok', 'stopped', 'paused', 'running'].map(k => h('span', { key: k }, h('i', { className: `wl-k-${k}` }), t(`wingline.run.${k}`))),
-        h(
-          'span',
-          null,
-          t('wingline.tl.roles'),
-          ROLES.map(r => h('span', { key: r }, h('span', { className: 'wl-role', style: { background: ROLE_TONE[r] } }), t(`wingline.role.${r}`)))
-        )
+        h('span', { className: 'wl-roles' }, ROLES.map(r => h('span', { key: r }, h('span', { className: 'wl-role', style: { background: ROLE_TONE[r] } }), t(`wingline.role.${r}`))))
       )
     )
   )
 }
 
-function Drawer({ task, byId, now, t, onAction, log, note, setNote, onClose, className }) {
-  if (!task) return h('aside', { className: `wl-panel wl-dr ${className || ''}` }, h('div', { className: 'wl-empty' }, h(Icon, { name: 'info' }), t('wingline.dr.pick')))
+function attemptNote(r, took, t) {
+  const kind = runKind(r)
+  if (kind !== 'stopped') return ''
+  const lim = isNum(r.max_runtime_seconds) && r.max_runtime_seconds > 0 ? r.max_runtime_seconds : null
+  if (r.outcome === 'timed_out') return t('wingline.run.limitHit', fmtDur(t, lim || took))
+  if (lim && took > lim) return t('wingline.run.pastLimit', fmtDur(t, lim), r.outcome || r.status || '?')
+  return ''
+}
+
+function Sheet({ task, byId, now, t, onAction, log, note, setNote, onClose, showReason, place }) {
   const role = roleOf(task)
   const runs = runsOf(task)
   const titleOf = id => byId.get(id)?.title || id
@@ -1234,151 +1359,139 @@ function Drawer({ task, byId, now, t, onAction, log, note, setNote, onClose, cla
   const logHere = log && log.id === task.id ? log : null
   return h(
     'aside',
-    { className: `wl-panel wl-dr ${className || ''}`, 'aria-live': 'polite', 'data-id': task.id },
+    { className: 'wl-sheet', role: 'dialog', 'aria-modal': 'false', 'aria-labelledby': 'wl-sheet-h', 'data-id': task.id, style: place || undefined },
     h(
       'div',
-      { className: 'wl-dr-top' },
-      h('span', { className: 'wl-role', style: { background: ROLE_TONE[role] } }),
-      h('span', null, t(`wingline.role.${role}`), ' · '),
-      h('span', { className: 'wl-mono' }, task.id),
-      onClose ? h('button', { type: 'button', className: 'wl-x', 'aria-label': t('wingline.dr.close'), onClick: onClose }, h(Icon, { name: 'close', size: 14 })) : null
+      { className: 'wl-sheet-head' },
+      h(
+        'div',
+        { className: 'wl-sheet-top' },
+        h('span', { className: 'wl-role', style: { background: ROLE_TONE[role] } }),
+        h('span', null, t(`wingline.role.${role}`)),
+        h('span', { className: 'wl-mono' }, task.id),
+        h('button', { type: 'button', className: 'wl-x', 'aria-label': t('wingline.dr.close'), 'data-act': 'close-sheet', onClick: onClose }, h(Icon, { name: 'close', size: 14 }))
+      ),
+      h('h3', { id: 'wl-sheet-h' }, task.title),
+      h(StatusPill, { task, t })
     ),
-    h('h3', null, task.title),
-    h(StatusPill, { task, t }),
-    blocked
-      ? h(
-          'div',
-          { className: 'wl-why' },
-          h('small', null, t('wingline.dr.why')),
-          reasonOf(task, t),
-          task.error_plain ? h('div', { className: 'wl-err wl-mono' }, task.error_plain) : null,
-          task.error_raw && task.error_raw !== task.error_plain
-            ? h('details', { className: 'wl-raw' }, h('summary', null, t('wingline.dr.raw')), h('div', { className: 'wl-err wl-mono' }, task.error_raw))
-            : null
-        )
-      : task.error_plain && task.status !== 'done'
-        ? h('div', { className: 'wl-why' }, h('small', null, t('wingline.dr.error')), h('div', { className: 'wl-err wl-mono' }, task.error_plain))
+    h(
+      'div',
+      { className: 'wl-sheet-body' },
+      showReason && blocked ? h('p', { className: 'wl-sheet-why', 'data-reason': '1' }, reasonOf(task, t)) : null,
+      h(
+        'dl',
+        { className: 'wl-dl' },
+        h('div', null, h('dt', null, t('wingline.dr.spent')), h('dd', null, money(task.cost?.usd), h('small', { 'data-cost': costStatus }, t(`wingline.cost.${costStatus}`)))),
+        h('div', null, h('dt', null, t('wingline.dr.work')), h('dd', null, fmtDur(t, workSeconds(task, now)))),
+        h('div', null, h('dt', null, t('wingline.dr.attempts')), h('dd', null, String(runs.length))),
+        h('div', null, h('dt', null, t('wingline.dr.comments')), h('dd', null, String(isNum(task.comments) ? task.comments : 0)))
+      ),
+      h(
+        'div',
+        { className: 'wl-kv' },
+        h('span', null, t('wingline.dr.assignee')),
+        h('span', null, task.assignee || '—'),
+        h('span', null, t('wingline.dr.limit')),
+        h('span', null, limit),
+        h('span', null, t('wingline.dr.retries')),
+        h('span', null, isNum(task.max_retries) ? `${task.consecutive_failures || 0}/${task.max_retries}` : String(task.consecutive_failures || 0)),
+        h('span', null, t('wingline.dr.created')),
+        h('span', null, fmtWhen(task.created_at)),
+        h('span', null, t('wingline.dr.waits')),
+        h('span', null, waits),
+        h('span', null, t('wingline.dr.unlocks')),
+        h('span', null, unlocks),
+        task.activity && task.activity.text ? h('span', null, t('wingline.dr.activity')) : null,
+        task.activity && task.activity.text ? h('span', null, task.activity.text) : null
+      ),
+      h('h4', { className: 'wl-h4' }, t('wingline.dr.attempts')),
+      runs.length
+        ? h(
+            'ol',
+            { className: 'wl-attempts' },
+            runs.map((r, i) => {
+              const kind = runKind(r)
+              const took = runEnd(r, now) - r.started_at
+              const extra = attemptNote(r, took, t)
+              return h(
+                'li',
+                { key: r.id ?? i, className: `is-${kind}`, 'data-attempt': i + 1 },
+                h('i', null),
+                h('div', { className: 'wl-att-line' }, h('b', null, t('wingline.run.attempt', i + 1)), h('span', null, fmtWhen(r.started_at))),
+                h('div', { className: 'wl-att-out' }, h('span', { 'data-outcome': '1' }, r.outcome || r.status || t(`wingline.run.${kind}`)), h('span', null, fmtDur(t, took))),
+                extra ? h('small', null, extra) : null,
+                h(RawError, { text: r.error_plain || '', t })
+              )
+            })
+          )
+        : h('p', { className: 'wl-muted' }, t('wingline.dr.noRuns')),
+      logHere
+        ? h(
+            'div',
+            { className: 'wl-log' },
+            h('div', { className: 'wl-log-head' }, h(Icon, { name: 'log' }), t('wingline.dr.log'), h(Btn, { id: 'log-close', kind: 'ghost', label: t('wingline.dr.logClose'), onClick: () => onAction('log-close', task) })),
+            logHere.loading
+              ? h('p', { className: 'wl-muted' }, t('wingline.dr.logLoading'))
+              : logHere.error
+                ? h('p', { className: 'wl-muted', role: 'alert' }, t('wingline.dr.logFailed', logHere.error))
+                : !logHere.exists
+                  ? h('p', { className: 'wl-muted' }, t('wingline.dr.logNone'))
+                  : h('div', null, logHere.truncated ? h('p', { className: 'wl-muted' }, t('wingline.dr.logTrunc')) : null, h('pre', { className: 'wl-logpre wl-mono' }, logHere.content || t('wingline.dr.logEmpty')))
+          )
         : null,
-    h(
-      'dl',
-      { className: 'wl-dl' },
-      h('div', null, h('dt', null, t('wingline.dr.spent')), h('dd', null, money(task.cost?.usd), h('small', { 'data-cost': costStatus }, t(`wingline.cost.${costStatus}`)))),
-      h('div', null, h('dt', null, t('wingline.dr.work')), h('dd', null, fmtDur(t, workSeconds(task, now)))),
-      h('div', null, h('dt', null, t('wingline.dr.attempts')), h('dd', null, String(runs.length))),
-      h('div', null, h('dt', null, t('wingline.dr.comments')), h('dd', null, String(isNum(task.comments) ? task.comments : 0)))
+      h(
+        'div',
+        { className: 'wl-note' },
+        h('h4', { className: 'wl-h4' }, t('wingline.dr.note')),
+        h('textarea', {
+          className: 'wl-input',
+          placeholder: t('wingline.dr.notePh'),
+          'aria-label': t('wingline.dr.note'),
+          value: note,
+          onChange: e => setNote(e.target.value)
+        }),
+        h(Btn, { id: 'note', icon: 'note', label: t('wingline.act.note'), disabled: !note.trim(), onClick: () => onAction('note', task) })
+      )
     ),
     h(
       'div',
-      { className: 'wl-kv' },
-      h('span', null, t('wingline.dr.assignee')),
-      h('span', null, task.assignee || '—'),
-      h('span', null, t('wingline.dr.limit')),
-      h('span', null, limit),
-      h('span', null, t('wingline.dr.retries')),
-      h('span', null, isNum(task.max_retries) ? `${task.consecutive_failures || 0}/${task.max_retries}` : String(task.consecutive_failures || 0)),
-      h('span', null, t('wingline.dr.created')),
-      h('span', null, fmtWhen(task.created_at)),
-      h('span', null, t('wingline.dr.waits')),
-      h('span', null, waits),
-      h('span', null, t('wingline.dr.unlocks')),
-      h('span', null, unlocks),
-      task.activity && task.activity.text ? h('span', null, t('wingline.dr.activity')) : null,
-      task.activity && task.activity.text ? h('span', null, task.activity.text) : null
-    ),
-    runs.length
-      ? h(
-          'ol',
-          { className: 'wl-attempts' },
-          runs.map((r, i) => {
-            const kind = runKind(r)
-            const took = runEnd(r, now) - r.started_at
-            const lim = isNum(r.max_runtime_seconds) && r.max_runtime_seconds > 0 ? r.max_runtime_seconds : null
-            const detail = r.error_plain || r.summary || ''
-            return h(
-              'li',
-              { key: r.id ?? i, className: `is-${kind}` },
-              h('i', null),
-              h('b', null, t('wingline.run.attempt', i + 1)),
-              ` · ${fmtWhen(r.started_at)} · ${t(`wingline.run.${kind}`)} · ${t('wingline.run.took', fmtDur(t, took))}`,
-              kind === 'stopped' ? h('small', null, r.outcome === 'timed_out' ? t('wingline.run.limitHit', fmtDur(t, lim || took)) : lim && took > lim ? t('wingline.run.pastLimit', fmtDur(t, lim), r.outcome || r.status || '?') : t('wingline.run.outcome', r.outcome || r.status || '?')) : null,
-              detail ? h('small', null, detail) : null
-            )
-          })
-        )
-      : h('p', { className: 'wl-raw' }, t('wingline.dr.noRuns')),
-    h(
-      'div',
-      { className: 'wl-actions' },
+      { className: 'wl-sheet-foot' },
       blocked ? h(Btn, { id: 'retry', icon: 'retry', kind: 'primary', label: t('wingline.act.retry'), onClick: () => onAction('retry', task) }) : null,
       h(Btn, { id: 'log', icon: 'log', label: t('wingline.act.log'), onClick: () => onAction('log', task) }),
       h(Btn, { id: 'kanban', icon: 'board', label: t('wingline.act.kanban'), onClick: () => onAction('kanban', task) }),
       h(Btn, { id: 'chat', icon: 'chat', label: t('wingline.act.chat'), onClick: () => onAction('chat', task) }),
       task.status !== 'archived' ? h(Btn, { id: 'archive', icon: 'archive', kind: 'ghost', label: t('wingline.act.archive'), onClick: () => onAction('archive', task) }) : null
-    ),
-    logHere
-      ? h(
-          'div',
-          { className: 'wl-log' },
-          h('div', { className: 'wl-log-head' }, h(Icon, { name: 'log' }), t('wingline.dr.log'), h(Btn, { id: 'log-close', kind: 'ghost', label: t('wingline.dr.logClose'), onClick: () => onAction('log-close', task) })),
-          logHere.loading
-            ? h('p', { className: 'wl-raw' }, t('wingline.dr.logLoading'))
-            : logHere.error
-              ? h('p', { className: 'wl-raw', role: 'alert' }, t('wingline.dr.logFailed', logHere.error))
-              : !logHere.exists
-                ? h('p', { className: 'wl-raw' }, t('wingline.dr.logNone'))
-                : h(
-                    'div',
-                    null,
-                    logHere.truncated ? h('p', { className: 'wl-raw' }, t('wingline.dr.logTrunc')) : null,
-                    h('pre', { className: 'wl-logpre wl-mono' }, logHere.content || t('wingline.dr.logEmpty'))
-                  )
-        )
-      : null,
-    h(
-      'div',
-      { className: 'wl-note' },
-      h('h4', null, t('wingline.dr.note')),
-      h('textarea', {
-        className: 'wl-input',
-        placeholder: t('wingline.dr.notePh'),
-        'aria-label': t('wingline.dr.note'),
-        value: note,
-        onChange: e => setNote(e.target.value)
-      }),
-      h(Btn, { id: 'note', icon: 'note', label: t('wingline.act.note'), disabled: !note.trim(), onClick: () => onAction('note', task) })
     )
   )
 }
 
-function Tag({ x, y, w = 220, text, tone, kind }) {
-  return h(
-    'foreignObject',
-    { className: 'wl-fo', x: x - w / 2, y: y - 12, width: w, height: 24 },
-    h('div', { className: `wl-tag${kind ? ` is-${kind}` : ''}` }, h('span', null, tone ? h('i', { style: { background: tone } }) : null, text))
-  )
-}
-
-function Hazard({ x, y, w, h: hh, r }) {
-  return h('rect', { x, y, width: w, height: hh, rx: r, style: { fill: 'url(#wl-hz)' } })
-}
-
 function Lamp({ x, y, st }) {
-  return h('circle', { cx: x, cy: y, r: st === 'crash' ? 6.5 : st === 'pause' ? 6 : 5, className: `wl-lamp${st === 'idle' ? '' : ` is-${st}`}` })
+  const r = st === 'crash' ? 6.5 : st === 'pause' ? 6 : 5
+  return h('g', { className: `wlf-lamp is-${st}` }, h('circle', { className: 'wlf-lamp-c', cx: x, cy: y, r }), h('circle', { cx: x - r * 0.3, cy: y - r * 0.3, r: r * 0.35, fill: INK.lampHi }))
+}
+
+function bottomBand(x, y, w, hh, r, band) {
+  const dx = r - Math.sqrt(Math.max(0, r * r - (r - band) * (r - band)))
+  return `M${x + dx},${y + hh - band} H${x + w - dx} A${r},${r} 0 0 1 ${x + w - r},${y + hh} H${x + r} A${r},${r} 0 0 1 ${x + dx},${y + hh - band} Z`
 }
 
 function Block({ x, y, w, h: hh, r = 10, role }) {
   return h(
     'g',
     null,
-    h('rect', { className: 'wl-m-body', x, y, width: w, height: hh, rx: r }),
-    h('rect', { x: x + 2, y: y + hh - 4, width: w - 4, height: 3, rx: 1.5, style: { fill: ROLE_TONE[role] } })
+    h('rect', { x, y, width: w, height: hh, rx: r, fill: 'url(#wlf-block)', filter: 'url(#wlf-f-block)' }),
+    h('path', { d: bottomBand(x, y, w, hh, r, 4), fill: RC[role], opacity: 0.85 })
   )
+}
+
+function Hazard({ x, y, w, h: hh, r }) {
+  return h('rect', { className: 'wlf-hazard', x, y, width: w, height: hh, rx: r, fill: 'url(#wlf-hz)' })
 }
 
 function MachineArt({ m, st, gateIn }) {
   const { x, y } = m
   const jam = st === 'crash' || st === 'pause'
-  const work = st === 'work'
+  const motion = st === 'work' ? ' is-work' : jam ? ' is-jam' : ''
   if (m.kind === 'press') {
     return h(
       'g',
@@ -1386,16 +1499,17 @@ function MachineArt({ m, st, gateIn }) {
       h(Block, { x: x - 50, y: y - 62, w: 100, h: 34, role: m.role }),
       h(Block, { x: x - 50, y: y + 28, w: 100, h: 34, role: m.role }),
       jam ? h(Hazard, { x: x - 46, y: y + 48, w: 92, h: 10, r: 4 }) : null,
+      h('rect', { x: x - 27.6, y: y - 20, width: 55.2, height: 42, rx: 8, fill: INK.plate }),
       h(
         'g',
-        { className: `wl-head${work ? ' is-work' : jam ? ' is-jam' : ''}` },
-        h('line', { className: 'wl-rod', x1: x - 18, y1: y - 40, x2: x - 18, y2: y - 50 }),
-        h('line', { className: 'wl-rod', x1: x + 18, y1: y - 40, x2: x + 18, y2: y - 50 }),
-        h('rect', { x: x - 30, y: y - 50, width: 60, height: 46, rx: 9, style: { fill: ROLE_TONE[m.role] } }),
-        h('rect', { x: x - 14, y: y - 34, width: 28, height: 14, rx: 4, className: 'wl-vent' })
+        { className: `wlf-press${motion}` },
+        [-18, 18].map(dx => h('line', { key: dx, x1: x + dx, y1: y - 66, x2: x + dx, y2: y - 48, stroke: INK.rod, strokeWidth: 5, strokeLinecap: 'round' })),
+        h('rect', { x: x - 30, y: y - 50, width: 60, height: 46, rx: 9, fill: `url(#wlf-head-${m.role})`, filter: 'url(#wlf-f-head)' }),
+        h('path', { d: `M${x - 30},${y - 42} V${y - 41} A9,9 0 0 1 ${x - 21},${y - 50} H${x + 21} A9,9 0 0 1 ${x + 30},${y - 41} V${y - 42} Z`, fill: INK.shine }),
+        h('rect', { x: x - 14, y: y - 34, width: 28, height: 14, rx: 4, fill: INK.inset })
       ),
-      h('rect', { className: 'wl-m-dark', x: x - 40, y: y - 66, width: 80, height: 26, rx: 8 }),
-      [0, 1, 2, 3, 4].map(k => h('rect', { key: k, className: 'wl-vent', x: x - 30 + k * 10, y: y - 60, width: 5, height: 14 })),
+      h('rect', { x: x - 40, y: y - 66, width: 80, height: 26, rx: 8, fill: INK.housing }),
+      [0, 1, 2, 3, 4].map(k => h('rect', { key: k, x: x - 30 + k * 10, y: y - 60, width: 5, height: 14, fill: INK.vent })),
       h(Lamp, { x: x + 30, y: y - 53, st })
     )
   }
@@ -1405,90 +1519,210 @@ function MachineArt({ m, st, gateIn }) {
       null,
       h(Block, { x: x - 30, y: y - 42, w: 60, h: 20, r: 8, role: m.role }),
       h(Block, { x: x - 30, y: y + 22, w: 60, h: 20, r: 8, role: m.role }),
-      h('rect', { className: `wl-glass${work ? ' is-work' : ''}`, x: x - 26, y: y - 30, width: 52, height: 60, rx: 10 }),
-      work ? h('rect', { className: 'wl-beam', x: x - 21.5, y: y - 28, width: 3, height: 56 }) : null,
       jam ? h(Hazard, { x: x - 28, y: y + 34, w: 56, h: 7, r: 3 }) : null,
-      h('rect', { className: 'wl-m-dark', x: x - 34, y: y - 46, width: 68, height: 14, rx: 6 }),
-      h('text', { className: 'wl-mnum', x: x - 22, y: y - 36, textAnchor: 'middle' }, String(m.n)),
-      h(Lamp, { x: x + 24, y: y - 39, st })
+      h('rect', { x: x - 26, y: y - 30, width: 52, height: 60, rx: 10, fill: st === 'work' ? INK.glassOn : INK.glass, stroke: INK.glassLine, strokeWidth: 2 }),
+      st === 'work' ? h('rect', { className: 'wlf-beam', x: x - 21.5, y: y - 28, width: 3, height: 56, fill: INK.beam }) : null,
+      h('rect', { x: x - 34, y: y - 50, width: 68, height: 20, rx: 7, fill: INK.housing }),
+      h('text', { className: 'wlf-num', x: x - 21, y: y - 39.5, fill: INK.scanNum, textAnchor: 'middle', dominantBaseline: 'central' }, String(m.n)),
+      h(Lamp, { x: x + 24, y: y - 40, st })
     )
   }
   if (m.kind === 'gate') {
-    const ins = gateIn || { done: [], total: 0 }
-    const n = Math.min(ins.total, 6)
-    const step = n > 4 ? 16 : 24
+    const lamps = gateIn ? gateIn.done.slice(0, 5) : []
     return h(
       'g',
       null,
       h(Block, { x: x - 60, y: y - 66, w: 120, h: 40, r: 12, role: m.role }),
       h(Block, { x: x - 60, y: y + 26, w: 120, h: 40, r: 12, role: m.role }),
+      lamps.map((done, i) => h('circle', { key: i, className: done ? 'wlf-in is-on' : 'wlf-in', cx: x - (lamps.length - 1) * 12 + i * 24, cy: y + 38, r: 6, fill: done ? INK.lampWork : INK.lampOff })),
+      gateIn ? h('text', { className: 'wlf-note', x, y: y + 58, textAnchor: 'middle', dominantBaseline: 'central', fill: INK.mute }, gateIn.label) : null,
+      jam ? h(Hazard, { x: x - 56, y: y - 40, w: 112, h: 8, r: 4 }) : null,
+      h('ellipse', { cx: x, cy: y + 2, rx: 24.8, ry: 18.1, fill: INK.plate }),
+      h('rect', { className: `wlf-arm${motion}`, x: x - 3.5, y: y - 50, width: 7, height: 24, rx: 3.5, fill: INK.rod }),
       h(
         'g',
-        { className: `wl-stamp${work ? ' is-work' : ''}` },
-        h('line', { className: 'wl-rod', x1: x, y1: y - 50, x2: x, y2: y - 46, style: { strokeWidth: 7 } }),
-        h('circle', { cx: x, cy: y - 36, r: 26, style: { fill: ROLE_TONE[m.role] } }),
-        h('circle', { cx: x, cy: y - 36, r: 15, className: 'wl-glassline', style: { strokeWidth: 3, opacity: 0.5 } })
+        { className: `wlf-stamp${motion}` },
+        h('circle', { cx: x, cy: y - 36, r: 26, fill: 'url(#wlf-disc)', filter: 'url(#wlf-f-head)' }),
+        h('circle', { cx: x, cy: y - 36, r: 15, fill: 'none', stroke: INK.ring, strokeWidth: 3 })
       ),
-      jam ? h(Hazard, { x: x - 56, y: y - 40, w: 112, h: 8, r: 4 }) : null,
-      Array.from({ length: n }, (_, i) => h('circle', { key: i, className: `wl-lampin${ins.done[i] ? ' is-on' : ''}`, cx: x - ((n - 1) * step) / 2 + i * step, cy: y + 40, r: 6 })),
-      ins.total ? h('text', { className: 'wl-gatein', x, y: y + 58, textAnchor: 'middle' }, ins.label) : null,
       h(Lamp, { x: x + 46, y: y - 56, st })
     )
   }
+  const gx = x + 8 + 9 * Math.cos(1.1 * Math.PI)
+  const gy = y - 16 + 9 * Math.sin(1.1 * Math.PI)
+  const ex = x + 8 + 9 * Math.cos(1.6 * Math.PI)
+  const ey = y - 16 + 9 * Math.sin(1.6 * Math.PI)
+  const lv = y + 6
+  const wave = Array.from({ length: 9 }, (_, k) => `L${x - 14 + k * 8},${lv + Math.sin(k) * 2}`).join(' ')
   return h(
     'g',
     null,
-    h('rect', { className: 'wl-m-body', x: x - 66, y: y - 48, width: 132, height: 96, rx: 22 }),
-    h('rect', { x: x - 64, y: y + 40, width: 128, height: 6, rx: 3, style: { fill: ROLE_TONE[m.role] } }),
-    h('circle', { className: 'wl-dome', cx: x + 18, cy: y - 6, r: 30 }),
-    h('path', { className: 'wl-liquid', d: `M${x - 10},${y + 6} Q${x + 18},${y - 2} ${x + 46},${y + 6} A30,30 0 0 1 ${x - 10},${y + 6}z` }),
-    h('circle', { className: 'wl-glassline', cx: x - 34, cy: y - 18, r: 9 }),
-    h('line', { className: 'wl-glassline', x1: x - 28, y1: y - 12, x2: x - 20, y2: y - 4 }),
+    h('rect', { x: x - 66, y: y - 48, width: 132, height: 96, rx: 22, fill: 'url(#wlf-lab)', filter: 'url(#wlf-f-block)' }),
+    h('path', { d: bottomBand(x - 66, y - 48, 132, 96, 22, 8), fill: RC[m.role] }),
     jam ? h(Hazard, { x: x - 60, y: y + 28, w: 120, h: 10, r: 4 }) : null,
+    h(
+      'g',
+      { clipPath: 'url(#wlf-dome)' },
+      h('rect', { x: x - 20, y: y - 40, width: 80, height: 80, fill: INK.dome }),
+      h('path', { d: `M${x - 14},${lv} ${wave} L${x + 50},${y + 30} L${x - 14},${y + 30} Z`, fill: st === 'work' ? INK.liquidOn : INK.liquid })
+    ),
+    h('circle', { cx: x + 18, cy: y - 6, r: 30, fill: 'none', stroke: INK.domeLine, strokeWidth: 3 }),
+    h('path', { d: `M${gx},${gy} A9,9 0 0 1 ${ex},${ey}`, fill: 'none', stroke: INK.glint, strokeWidth: 3 }),
+    h(
+      'g',
+      { className: `wlf-glass${motion}` },
+      h('circle', { cx: x - 34, cy: y - 18, r: 9, fill: 'none', stroke: INK.housing, strokeWidth: 4 }),
+      h('line', { x1: x - 28, y1: y - 12, x2: x - 20, y2: y - 4, stroke: INK.housing, strokeWidth: 4, strokeLinecap: 'round' })
+    ),
     h(Lamp, { x: x + 52, y: y - 34, st })
   )
 }
 
-function Crate({ task, x, y, sel, alert, scrap, onSelect, label }) {
+function Crate({ task, x, y, sel, alert, scrap, waits, onSelect, label }) {
+  const open = () => onSelect(task.id)
   return h(
     'g',
     {
-      className: `wl-pkg${scrap ? ' is-scrap' : ''}`,
-      style: { transform: `translate(${x}px, ${y}px)` },
+      className: `wlf-pkg${scrap ? ' is-scrap' : ''}`,
+      style: { transform: `translate(${x}px,${y}px)` },
       role: 'button',
       tabIndex: 0,
       'aria-label': label,
-      'data-id': task.id,
       'data-pkg': '1',
-      onClick: e => {
-        e.stopPropagation()
-        onSelect(task.id)
-      },
+      'data-id': task.id,
+      onClick: open,
       onKeyDown: e => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
-          onSelect(task.id)
+          open()
         }
       }
     },
-    h('ellipse', { className: 'wl-pkg-sh', cx: 2, cy: 12, rx: 16, ry: 5.5 }),
-    h('rect', { className: 'wl-pkg-lid', x: -15, y: -13.5, width: 30, height: 14, rx: 4 }),
-    h('rect', { className: 'wl-pkg-body', x: -15, y: -4.5, width: 30, height: 18, rx: 4 }),
-    h('rect', { className: 'wl-pkg-tape', x: -3, y: -13.5, width: 6, height: 9 }),
-    h('rect', { x: -11, y: 0.5, width: 9, height: 8, rx: 2, style: { fill: scrap ? 'var(--ui-text-quaternary)' : ROLE_TONE[roleOf(task)] } }),
+    h('rect', { x: -21, y: -21, width: 42, height: 42, fill: 'transparent' }),
+    h('ellipse', { cx: 2, cy: 12, rx: 16, ry: 5.5, fill: INK.crateShadow }),
+    h('rect', { x: -15, y: -13.5, width: 30, height: 14, rx: 4, fill: scrap ? INK.scrapLid : INK.crateLid }),
+    h('rect', { x: -15, y: -4.5, width: 30, height: 18, rx: 4, fill: scrap ? 'url(#wlf-scrapc)' : 'url(#wlf-crate)' }),
+    h('rect', { x: -12, y: -4, width: 24, height: 1, fill: INK.crateHi }),
+    h('rect', { x: -3, y: -13.5, width: 6, height: 9, fill: scrap ? INK.scrapTape : INK.tape }),
+    h('rect', { x: -3, y: -4.5, width: 6, height: 6, fill: INK.shade }),
+    h('rect', { x: -11, y: 0.5, width: 9, height: 8, rx: 2, fill: scrap ? INK.scrapTag : RC[roleOf(task)] }),
     alert
       ? h(
           'g',
-          null,
-          h('rect', { className: `wl-bang${alert === 'pause' ? ' is-pause' : ''}`, x: 1, y: -0.5, width: 11, height: 10, rx: 2 }),
-          h('text', { className: 'wl-bang-t', x: 6.5, y: 7.5, textAnchor: 'middle' }, '!')
+          { className: 'wlf-bang', 'data-alert': alert },
+          h('rect', { x: 1, y: -0.5, width: 11, height: 10, rx: 2, fill: alert === 'crash' ? INK.red : INK.amber }),
+          h('rect', { x: 5.8, y: 1.2, width: 1.4, height: 4.6, fill: INK.white }),
+          h('rect', { x: 5.8, y: 6.6, width: 1.4, height: 1.4, fill: INK.white })
         )
       : null,
-    h('rect', { className: sel ? 'wl-pkg-sel' : 'wl-pkg-focus', x: -21, y: -20, width: 42, height: 40, rx: 8 })
+    waits
+      ? h(
+          'g',
+          { 'aria-hidden': 'true' },
+          h('circle', { cx: 14, cy: -16, r: 8, fill: INK.ink }),
+          h('path', { d: 'M11.4,-17.5 A2.6,2.6 0 0 1 16.6,-17.5', fill: 'none', stroke: INK.white, strokeWidth: 1.6 }),
+          h('rect', { x: 10.5, y: -17, width: 7, height: 5, fill: INK.white })
+        )
+      : null,
+    h('rect', { className: 'wlf-pkg-focus', x: -20, y: -18.5, width: 40, height: 37, rx: 8 }),
+    sel ? h('rect', { className: 'wlf-pkg-sel', x: -20, y: -18.5, width: 40, height: 37, rx: 8, fill: 'none', stroke: INK.ink, strokeWidth: 2 }) : null
   )
 }
 
-function Factory({ tasks, now, axis, selId, onSelect, onNotice, t, drawer }) {
+function Tag({ x, y, w = 260, text, tone, kind, anchor = 'middle' }) {
+  const left = anchor === 'start' ? x : x - w / 2
+  return h(
+    'foreignObject',
+    { className: 'wlf-fo', x: left, y: y - 16, width: w, height: 32 },
+    h('div', { className: `wlf-tag${kind ? ` is-${kind}` : ''}${anchor === 'start' ? ' is-start' : ''}` }, h('span', null, tone ? h('i', { style: { background: tone } }) : null, h('em', null, text)))
+  )
+}
+
+function SceneDefs() {
+  const shadow = (id, dy, sd, op) =>
+    h('filter', { id, x: '-30%', y: '-30%', width: '160%', height: '180%' }, h('feDropShadow', { dx: 0, dy, stdDeviation: sd, floodColor: INK.shadow, floodOpacity: op }))
+  const lin = (id, a, b) => h('linearGradient', { id, x1: 0, y1: 0, x2: 0, y2: 1 }, h('stop', { offset: 0, stopColor: a }), h('stop', { offset: 1, stopColor: b }))
+  const F = SCENE
+  return h(
+    'defs',
+    null,
+    lin('wlf-floor', INK.floor0, INK.floor1),
+    lin('wlf-block', INK.block0, INK.block1),
+    lin('wlf-lab', INK.block0, INK.lab1),
+    lin('wlf-crate', INK.crate0, INK.crate1),
+    lin('wlf-scrapc', INK.scrap0, INK.scrap1),
+    ROLES.map(r => h('linearGradient', { key: r, id: `wlf-head-${r}`, x1: 0, y1: 0, x2: 0, y2: 1 }, h('stop', { offset: 0, stopColor: RC_LIGHT[r] }), h('stop', { offset: 1, stopColor: RC[r] }))),
+    h('radialGradient', { id: 'wlf-disc', cx: 0.35, cy: 0.3, r: 0.75 }, h('stop', { offset: 0, stopColor: INK.disc0 }), h('stop', { offset: 1, stopColor: RC.gate })),
+    shadow('wlf-f-floor', 18, 20, 0.28),
+    shadow('wlf-f-belt', 4, 4, 0.25),
+    shadow('wlf-f-block', 5, 5, 0.25),
+    shadow('wlf-f-zone', 4, 5, 0.18),
+    shadow('wlf-f-head', 6, 5, 0.3),
+    h(
+      'pattern',
+      { id: 'wlf-hz', width: 14, height: 14, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' },
+      h('rect', { width: 7, height: 14, fill: INK.yellow }),
+      h('rect', { x: 7, width: 7, height: 14, fill: INK.redBed })
+    ),
+    h('clipPath', { id: 'wlf-floorclip' }, h('rect', { x: F.x + 12, y: F.y + 12, width: F.w - 24, height: F.h - 26, rx: 28 })),
+    h('clipPath', { id: 'wlf-dome' }, h('circle', { cx: 496, cy: 764, r: 30 })),
+    h('clipPath', { id: 'wlf-dockclip' }, h('rect', { x: ZONE.dock.x, y: ZONE.dock.y, width: ZONE.dock.w, height: ZONE.dock.h, rx: 18 }))
+  )
+}
+
+function SceneFloor({ t }) {
+  const I = ZONE.intake
+  const D = ZONE.dock
+  const S = ZONE.scrap
+  const F = { x: SCENE.x + 12, y: SCENE.y + 12, w: SCENE.w - 24, h: SCENE.h - 26 }
+  const xs = []
+  for (let x = F.x + 40; x < F.x + F.w; x += 40) xs.push(x)
+  const ys = []
+  for (let y = F.y + 40; y < F.y + F.h; y += 40) ys.push(y)
+  const label = (text, x, y, key, fill = INK.label) => h('text', { key, className: 'wlf-zone-l', x, y, fill }, text)
+  return h(
+    'g',
+    { 'aria-hidden': 'true' },
+    h('rect', { x: F.x, y: F.y, width: F.w, height: F.h, rx: 28, fill: 'url(#wlf-floor)', filter: 'url(#wlf-f-floor)' }),
+    h(
+      'g',
+      { clipPath: 'url(#wlf-floorclip)', stroke: INK.grid, strokeWidth: 1 },
+      xs.map(x => h('line', { key: `x${x}`, x1: x, y1: F.y, x2: x, y2: F.y + F.h })),
+      ys.map(y => h('line', { key: `y${y}`, x1: F.x, y1: y, x2: F.x + F.w, y2: y }))
+    ),
+    h('rect', { x: I.x, y: I.y, width: I.w, height: I.h, rx: 18, fill: INK.intake, stroke: INK.intakeLine, strokeWidth: 2, strokeDasharray: '6 6' }),
+    h('rect', { x: 26, y: 380, width: 18, height: 140, rx: 6, fill: INK.door }),
+    Array.from({ length: 17 }, (_, i) => h('rect', { key: `d${i}`, x: 28, y: 386 + i * 8, width: 14, height: 2, fill: INK.doorSlat })),
+    h('rect', { x: D.x, y: D.y, width: D.w, height: D.h, rx: 18, fill: INK.dock, filter: 'url(#wlf-f-zone)' }),
+    h(
+      'g',
+      { clipPath: 'url(#wlf-dockclip)' },
+      Array.from({ length: Math.floor((D.h - 60) / 23) + 1 }, (_, i) => h('rect', { key: `p${i}`, x: D.x, y: D.y + 60 + i * 23, width: D.w, height: 1.5, fill: INK.plank }))
+    ),
+    h('rect', { x: S.x, y: S.y, width: S.w, height: S.h, rx: 16, fill: INK.scrap, stroke: INK.scrapLine, strokeWidth: 2, strokeDasharray: '4 6' }),
+    h(
+      'g',
+      { filter: 'url(#wlf-f-belt)' },
+      BELTS.map((b, i) => h('polyline', { key: `bd${i}`, className: 'wlf-bed', points: ptsAttr(b), fill: 'none', stroke: INK.bed, strokeWidth: 30, strokeLinejoin: 'round' })),
+      h('polyline', { className: 'wlf-redbed', points: ptsAttr(RED_BELT), fill: 'none', stroke: INK.redBed, strokeWidth: 30 })
+    ),
+    BELTS.map((b, i) => h('polyline', { key: `bi${i}`, points: ptsAttr(b), fill: 'none', stroke: INK.bedIn, strokeWidth: 22, strokeLinejoin: 'round' })),
+    BELTS.map((b, i) => h('polyline', { key: `bs${i}`, className: 'wlf-slats', points: ptsAttr(b), fill: 'none', stroke: INK.slat, strokeWidth: 22, strokeLinejoin: 'round', strokeDasharray: '3 8' })),
+    h('polyline', { points: ptsAttr(RED_BELT), fill: 'none', stroke: INK.yellow, strokeWidth: 22 }),
+    h('polyline', { className: 'wlf-redslats', points: ptsAttr(RED_BELT), fill: 'none', stroke: INK.redBed, strokeWidth: 22, strokeDasharray: '2 16', opacity: 0.35 }),
+    CABLES.map((d, i) =>
+      h('g', { key: `cb${i}`, fill: 'none', strokeLinecap: 'round', strokeLinejoin: 'round' }, h('path', { d, stroke: INK.cable, strokeWidth: 5 }), h('path', { d, stroke: INK.cableIn, strokeWidth: 2 }))
+    ),
+    label(t('wingline.fx.zone.intake'), I.x + 14, I.y + 28, 'li'),
+    label(t('wingline.fx.zone.build'), 308, 190, 'lb'),
+    label(t('wingline.fx.zone.review'), 690, 236, 'lr'),
+    label(t('wingline.fx.zone.merge'), 1012, 266, 'lm'),
+    label(t('wingline.fx.zone.shipped'), D.x + 16, D.y + 28, 'ls'),
+    label(t('wingline.fx.zone.archived'), S.x + 14, S.y + 26, 'la')
+  )
+}
+
+function Factory({ tasks, now, axis, selId, onSelect, onNotice, t }) {
   const [live, setLive] = useState(true)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(4)
@@ -1515,6 +1749,12 @@ function Factory({ tasks, now, axis, selId, onSelect, onNotice, t, drawer }) {
   const T = live ? null : axis.toR(Math.min(c, axis.span))
   const lay = useMemo(() => layoutFactory(tasks, T), [tasks, T])
   const byId = useMemo(() => new Map(tasks.map(x => [x.id, x])), [tasks])
+  const groups = useMemo(() => groupsOf(tasks, t), [tasks, t])
+  const prefixOf = useMemo(() => {
+    const out = new Map()
+    for (const g of groups) for (const x of g.tasks) out.set(x.id, g.other ? '' : g.name)
+    return out
+  }, [groups])
   const names = {
     pressA: t('wingline.fx.machine.pressA'),
     pressB: t('wingline.fx.machine.pressB'),
@@ -1526,8 +1766,6 @@ function Factory({ tasks, now, axis, selId, onSelect, onNotice, t, drawer }) {
   const nBay = lay.zones.bay.length
   const shipped = lay.zones.dock.reduce((s, x) => s + (x.cost?.usd || 0), 0)
   const [day, time] = fmtClock(live ? now : T)
-  const machineOfTask = {}
-  for (const [k, o] of Object.entries(lay.occ)) machineOfTask[o.task.id] = k
   const whereOf = task => {
     const z = lay.zoneOf[task.id]
     if (z === 'machine') {
@@ -1545,7 +1783,7 @@ function Factory({ tasks, now, axis, selId, onSelect, onNotice, t, drawer }) {
     ? (() => {
         const ps = (gateTask.parents || []).filter(p => byId.has(p))
         const done = ps.map(p => lay.zoneOf[p] === 'dock')
-        return { done, total: ps.length, label: t('wingline.fx.inputs', done.filter(Boolean).length, ps.length) }
+        return ps.length ? { done, label: t('wingline.fx.inputs', done.filter(Boolean).length, ps.length) } : null
       })()
     : null
   const machineTask = m => {
@@ -1574,43 +1812,53 @@ function Factory({ tasks, now, axis, selId, onSelect, onNotice, t, drawer }) {
       sel: task.id === selId,
       alert: zone === 'bay' ? lay.kinds[task.id] : null,
       scrap: zone === 'scrap',
+      waits: zone === 'intake' && (task.parents || []).some(q => lay.zoneOf[q] && lay.zoneOf[q] !== 'dock'),
       onSelect,
       label: t('wingline.fx.pkg', task.title, whereOf(task))
     })
   }
-  const visible = ['intake', 'machine', 'bay', 'dock', 'scrap'].flatMap(z => lay.zones[z].map(task => ({ task, z })))
   const first = lay.zones.bay[0]
   const firstPos = first ? lay.pos[first.id] : null
-  const callout = first && firstPos
-    ? (() => {
-        const kind = lay.kinds[first.id]
-        const r = runsOf(first).filter(x => isNum(x.ended_at) && (T == null || x.ended_at <= T)).pop()
-        const kick = kind === 'pause' ? t('wingline.fx.callPause') : r && r.outcome === 'timed_out' ? t('wingline.fx.callLimit') : r && r.outcome === 'crashed' ? t('wingline.fx.callCrash') : t('wingline.fx.callStop')
-        const cx = firstPos[0] + 40 + (Math.min(nBay, CAP.bay) - 1) * 76
-        const w = Math.max(160, Math.min(1548 - cx, 330))
-        return h(
-          'foreignObject',
-          { className: 'wl-fo', x: cx, y: firstPos[1] - 50, width: w, height: 86 },
-          h(
-            'div',
-            {
-              className: `wl-callout${kind === 'pause' ? ' is-pause' : ''}`,
-              role: 'button',
-              tabIndex: 0,
-              'data-callout': first.id,
-              onClick: () => onSelect(first.id),
-              onKeyDown: e => {
-                if (e.key === 'Enter') onSelect(first.id)
-              }
-            },
-            h('small', null, kick),
-            h('b', null, first.title),
-            h('span', null, t('wingline.fx.callMeta', fmtDur(t, workSeconds(first, T ?? now)), runsOf(first).length, money(first.cost?.usd))),
-            h('em', null, t('wingline.fx.decide'))
+  const callout =
+    first && firstPos
+      ? (() => {
+          const kind = lay.kinds[first.id]
+          const r = runsOf(first).filter(x => isNum(x.ended_at) && (T == null || x.ended_at <= T)).pop()
+          const kick = kind === 'pause' ? t('wingline.fx.callPause') : r && r.outcome === 'timed_out' ? t('wingline.fx.callLimit') : r && r.outcome === 'crashed' ? t('wingline.fx.callCrash') : t('wingline.fx.callStop')
+          const cx = firstPos[0] + 40 + (Math.min(nBay, CAP.bay) - 1) * 76
+          const w = Math.max(200, Math.min(SCENE.x + SCENE.w - 20 - cx, 350))
+          const cy = firstPos[1] - 62
+          return h(
+            'g',
+            { key: 'callout' },
+            h('path', { d: `M${cx + 1},${cy + 50} L${cx - 10},${cy + 58} L${cx + 1},${cy + 66} Z`, fill: INK.card }),
+            h(
+              'foreignObject',
+              { className: 'wlf-fo', x: cx, y: cy, width: w, height: 120 },
+              h(
+                'div',
+                {
+                  className: `wlf-call${kind === 'pause' ? ' is-pause' : ''}`,
+                  role: 'button',
+                  tabIndex: 0,
+                  'data-callout': first.id,
+                  onClick: () => onSelect(first.id),
+                  onKeyDown: e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      onSelect(first.id)
+                    }
+                  }
+                },
+                h('small', null, kick),
+                h('b', null, first.title),
+                h('span', null, t('wingline.fx.callMeta', fmtDur(t, workSeconds(first, T ?? now)), runsOf(first).length, money(first.cost?.usd))),
+                h('em', null, t('wingline.fx.decide'))
+              )
+            )
           )
-        )
-      })()
-    : null
+        })()
+      : null
   const toggle = () => {
     if (playing) {
       setPlaying(false)
@@ -1629,6 +1877,7 @@ function Factory({ tasks, now, axis, selId, onSelect, onNotice, t, drawer }) {
   const D = ZONE.dock
   const I = ZONE.intake
   const S = ZONE.scrap
+  const moving = live ? working > 0 : playing
   return h(
     'div',
     { className: 'wl-fx' },
@@ -1639,163 +1888,119 @@ function Factory({ tasks, now, axis, selId, onSelect, onNotice, t, drawer }) {
         'div',
         { className: `wl-pill${live ? '' : ' is-replay'}`, 'data-mode': live ? 'live' : 'replay', role: 'status' },
         h('i', null),
-        live ? t('wingline.fx.live') : playing ? t('wingline.fx.replay', speed) : t('wingline.fx.paused'),
+        h('b', null, live ? t('wingline.fx.live') : playing ? t('wingline.fx.replay', speed) : t('wingline.fx.paused')),
         h('span', null, live ? (working ? t('wingline.fx.running', working) : t('wingline.fx.idle')) : working ? t('wingline.fx.working', working) : t('wingline.fx.idle'))
       ),
       h('div', { className: 'wl-clock' }, h('small', null, day), h('b', null, time))
     ),
     h(
       'div',
-      { className: 'wl-stagewrap' },
+      { className: 'wlf-stage' },
       h(
-        'div',
-        { className: 'wl-stage' },
+        'svg',
+        {
+          className: 'wlf-svg',
+          viewBox: `${SCENE.x} ${SCENE.y} ${SCENE.w} ${SCENE.h}`,
+          preserveAspectRatio: 'xMidYMid meet',
+          role: 'group',
+          'aria-label': t('wingline.fx.aria'),
+          'data-moving': moving ? '1' : '0',
+          'data-jam': nBay ? '1' : '0'
+        },
+        h(SceneDefs, null),
+        h(SceneFloor, { t }),
         h(
-          'svg',
-          {
-            className: 'wl-fxsvg',
-            viewBox: '0 0 1600 900',
-            preserveAspectRatio: 'xMidYMid meet',
-            role: 'group',
-            'aria-label': t('wingline.fx.aria'),
-            'data-moving': (live ? working > 0 : playing) ? '1' : '0',
-            'data-jam': nBay ? '1' : '0'
-          },
-          h(
-            'defs',
-            null,
-            h(
-              'pattern',
-              { id: 'wl-hz', width: 14, height: 14, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' },
-              h('rect', { className: 'wl-hz-a', width: 7, height: 14 }),
-              h('rect', { className: 'wl-hz-b', x: 7, width: 7, height: 14 })
-            )
-          ),
-          h('rect', { className: 'wl-floor', x: 26, y: 84, width: 1548, height: 786, rx: 28 }),
-          Array.from({ length: 38 }, (_, i) => h('line', { key: `gx${i}`, className: 'wl-gridline', x1: 66 + i * 40, y1: 114, x2: 66 + i * 40, y2: 866 })),
-          Array.from({ length: 19 }, (_, i) => h('line', { key: `gy${i}`, className: 'wl-gridline', x1: 30, y1: 152 + i * 40, x2: 1570, y2: 152 + i * 40 })),
-          h('path', { className: 'wl-wall', d: 'M26,112 L26,112 Q26,84 54,84 L1546,84 Q1574,84 1574,112 Z' }),
-          Array.from({ length: 8 }, (_, i) => h('rect', { key: `sk${i}`, className: 'wl-sky', x: 120 + i * 170, y: 90, width: 110, height: 16, rx: 5 })),
-          h('rect', { className: 'wl-zone', x: I.x, y: I.y, width: I.w, height: I.h, rx: 18 }),
-          h('rect', { className: 'wl-door', x: 26, y: 380, width: 18, height: 140, rx: 6 }),
-          h('rect', { className: 'wl-dock', x: D.x, y: D.y, width: D.w, height: D.h, rx: 18 }),
-          Array.from({ length: 13 }, (_, i) => h('line', { key: `pl${i}`, className: 'wl-plank', x1: D.x + 4, y1: D.y + 108 + i * 20, x2: D.x + D.w - 4, y2: D.y + 108 + i * 20 })),
-          h('rect', { className: 'wl-zone', x: S.x, y: S.y, width: S.w, height: S.h, rx: 16 }),
-          BELTS.map((b, i) => h('polyline', { key: `bd${i}`, className: 'wl-bed', points: ptsAttr(b) })),
-          BELTS.map((b, i) => h('polyline', { key: `bi${i}`, className: 'wl-bed-in', points: ptsAttr(b) })),
-          BELTS.map((b, i) => h('polyline', { key: `bs${i}`, className: 'wl-slats', points: ptsAttr(b) })),
-          h('polyline', { className: 'wl-redbed', points: ptsAttr(RED_BELT) }),
-          h('polyline', { className: 'wl-redslats', points: ptsAttr(RED_BELT) }),
-          CABLES.map((d, i) => h('path', { key: `cb${i}`, className: 'wl-cable', d })),
-          h('text', { className: 'wl-flabel', x: I.x + 14, y: I.y + 24 }, t('wingline.fx.zone.intake')),
-          h('text', { className: 'wl-flabel', x: 360, y: 156 }, t('wingline.fx.zone.build')),
-          h('text', { className: 'wl-flabel', x: 690, y: 252 }, t('wingline.fx.zone.review')),
-          h('text', { className: 'wl-flabel', x: 1010, y: 266 }, t('wingline.fx.zone.merge')),
-          h('text', { className: 'wl-flabel', x: D.x + 16, y: D.y + 26 }, t('wingline.fx.zone.shipped')),
-          h('text', { className: 'wl-flabel', x: S.x + 14, y: S.y + 22 }, t('wingline.fx.zone.archived')),
-          h('text', { className: 'wl-flabel', x: 410, y: 704 }, t('wingline.fx.zone.investigate')),
+          'g',
+          { 'data-bay': nBay },
+          h('rect', { className: `wlf-bin${nBay ? ' is-on' : ''}`, x: B.x, y: B.y, width: B.w, height: B.h, rx: 20, fill: nBay ? INK.binOn : INK.bin, filter: 'url(#wlf-f-zone)' }),
+          h('rect', { className: 'wlf-binline', x: B.x + 7, y: B.y + 7, width: B.w - 14, height: B.h - 14, rx: 15, fill: 'none', stroke: INK.binLine, strokeWidth: 2.5, strokeDasharray: '10 8', opacity: nBay ? 0.8 : 0.3 }),
+          h('rect', { x: B.x + 22, y: B.y + 20, width: nBay ? 184 : 162, height: 34, rx: 17, fill: nBay ? INK.red : INK.binOff }),
+          h('text', { className: 'wlf-binhead', x: B.x + 38, y: B.y + 37, dominantBaseline: 'central', fill: INK.white }, t('wingline.fx.bin', nBay)),
+          nBay ? null : h('text', { className: 'wlf-note', x: B.x + 26, y: B.y + 100, dominantBaseline: 'central', fill: INK.label }, t('wingline.fx.clear')),
+          lay.zones.bay.slice(0, CAP.bay).map(task => {
+            const p = lay.pos[task.id]
+            return h('g', { key: `ring-${task.id}`, 'aria-hidden': 'true' }, h('circle', { cx: p[0], cy: p[1] + 2, r: 25, fill: INK.halo }), h('circle', { className: 'wlf-ring', cx: p[0], cy: p[1] + 2, r: 25, fill: 'none', stroke: INK.ringRed, strokeWidth: 2 }))
+          })
+        ),
+        lay.zones.intake.length ? null : h('text', { className: 'wlf-note', x: I.x + I.w / 2, y: I.y + I.h / 2, textAnchor: 'middle', fill: INK.label }, t('wingline.fx.queueEmpty')),
+        lay.zones.scrap.length ? null : h('text', { className: 'wlf-note', x: S.x + S.w / 2, y: S.y + 84, textAnchor: 'middle', fill: INK.label }, t('wingline.fx.none')),
+        h(
+          'g',
+          { 'data-shipped': lay.zones.dock.length },
+          h('rect', { x: D.x + 12, y: D.y + 44, width: D.w - 24, height: 66, rx: 12, fill: INK.card, filter: 'url(#wlf-f-zone)' }),
+          h('text', { className: 'wlf-sign', x: D.x + 26, y: D.y + 78, dominantBaseline: 'central', fill: INK.ink }, money(shipped)),
+          h('text', { className: 'wlf-note', x: D.x + D.w - 26, y: D.y + 67, textAnchor: 'end', dominantBaseline: 'central', fill: INK.mute }, t('wingline.fx.crates', lay.zones.dock.length)),
+          h('text', { className: 'wlf-note', x: D.x + D.w - 26, y: D.y + 89, textAnchor: 'end', dominantBaseline: 'central', fill: INK.mute }, t('wingline.fx.shipped'))
+        ),
+        MACHINES.map(m => {
+          const o = lay.occ[m.key]
+          const st = o ? o.state : 'idle'
+          const label = o ? (o.state === 'work' ? t('wingline.fx.mWork', nameOf(m), o.task.title) : t('wingline.fx.mJam', nameOf(m), o.task.title)) : t('wingline.fx.mIdle', nameOf(m))
+          return h(
+            'g',
+            {
+              key: m.key,
+              className: 'wlf-m',
+              role: 'button',
+              tabIndex: 0,
+              'aria-label': label,
+              'data-machine': m.key,
+              'data-state': st,
+              onClick: () => clickMachine(m),
+              onKeyDown: e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  clickMachine(m)
+                }
+              }
+            },
+            h('rect', { className: 'wlf-m-focus', x: m.x - m.w / 2 - 8, y: m.y - m.h / 2 - 8, width: m.w + 16, height: m.h + 16, rx: 14 }),
+            h(MachineArt, { m, st, gateIn: m.key === 'gate' ? gateIn : null }),
+            m.kind === 'scan' ? null : h('text', { className: 'wlf-name', x: m.x, y: m.y + m.h / 2 + (m.kind === 'gate' ? 26 : 20), textAnchor: 'middle', dominantBaseline: 'central', fill: st === 'crash' ? INK.redText : INK.label }, nameOf(m).toUpperCase())
+          )
+        }),
+        ['intake', 'bay', 'dock', 'scrap'].flatMap(z => lay.zones[z].map(task => crate(task, z))),
+        lay.zones.machine.map(task => crate(task, 'machine')),
+        MACHINES.filter(m => lay.occ[m.key] && lay.occ[m.key].state === 'crash').map(m =>
           h(
             'g',
-            { 'data-bay': nBay },
-            h('rect', { className: `wl-bay${nBay ? ' is-on' : ''}`, x: B.x, y: B.y, width: B.w, height: B.h, rx: 20 }),
-            h('rect', { className: `wl-bay-edge${nBay ? ' is-on' : ''}`, x: B.x + 5, y: B.y + 5, width: B.w - 10, height: B.h - 10, rx: 16 }),
-            nBay ? h('rect', { className: 'wl-ants', x: B.x + 5, y: B.y + 5, width: B.w - 10, height: B.h - 10, rx: 16 }) : null,
-            h('rect', { className: `wl-binhead${nBay ? ' is-on' : ''}`, x: B.x + 20, y: B.y + 18, width: 160, height: 30, rx: 15 }),
-            h('text', { className: 'wl-binhead-t', x: B.x + 34, y: B.y + 38 }, t('wingline.fx.bin', nBay)),
-            nBay ? null : h('text', { className: 'wl-clear', x: B.x + 196, y: B.y + 38 }, t('wingline.fx.clear')),
-            lay.zones.bay.slice(0, CAP.bay).map(task => {
-              const p = lay.pos[task.id]
-              return h('g', { key: `ring-${task.id}` }, h('circle', { className: 'wl-halo', cx: p[0], cy: p[1] + 2, r: 24 }), h('circle', { className: 'wl-ring', cx: p[0], cy: p[1] + 2, r: 22 }))
-            })
-          ),
-          lay.zones.intake.length ? null : h('text', { className: 'wl-clear', x: I.x + I.w / 2, y: I.y + I.h / 2, textAnchor: 'middle' }, t('wingline.fx.queueEmpty')),
-          lay.zones.scrap.length ? null : h('text', { className: 'wl-clear', x: S.x + S.w / 2, y: S.y + 82, textAnchor: 'middle' }, t('wingline.fx.none')),
-          h(
-            'foreignObject',
-            { className: 'wl-fo', x: D.x + 12, y: D.y + 40, width: D.w - 24, height: 58 },
-            h('div', { className: 'wl-sign', 'data-shipped': lay.zones.dock.length }, h('b', null, money(shipped)), h('span', null, t('wingline.fx.crates', lay.zones.dock.length), h('br', null), t('wingline.fx.shipped')))
-          ),
-          MACHINES.map(m => {
-            const o = lay.occ[m.key]
-            const st = o ? o.state : 'idle'
-            const label = o ? (o.state === 'work' ? t('wingline.fx.mWork', nameOf(m), o.task.title) : t('wingline.fx.mJam', nameOf(m), o.task.title)) : t('wingline.fx.mIdle', nameOf(m))
-            return h(
-              'g',
-              {
-                key: m.key,
-                className: 'wl-m',
-                role: 'button',
-                tabIndex: 0,
-                'aria-label': label,
-                'data-machine': m.key,
-                'data-state': st,
-                onClick: () => clickMachine(m),
-                onKeyDown: e => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    clickMachine(m)
-                  }
-                }
-              },
-              h('rect', { className: 'wl-m-focus', x: m.x - m.w / 2 - 8, y: m.y - m.h / 2 - 8, width: m.w + 16, height: m.h + 16, rx: 14 }),
-              h(MachineArt, { m, st, gateIn: m.key === 'gate' ? gateIn : null }),
-              m.kind === 'scan' ? null : h('text', { className: 'wl-mname', x: m.x, y: m.y + m.h / 2 + (m.kind === 'gate' ? 24 : 16), textAnchor: 'middle' }, nameOf(m).toUpperCase())
-            )
-          }),
-          visible.filter(v => v.z !== 'machine').map(v => crate(v.task, v.z)),
-          lay.zones.machine.map(task => crate(task, 'machine')),
-          lay.zones.intake
-            .filter(task => lay.pos[task.id] && (task.parents || []).some(p => lay.zoneOf[p] && lay.zoneOf[p] !== 'dock'))
-            .map(task => {
-              const [x, y] = lay.pos[task.id]
-              return h(
-                'g',
-                { key: `lk-${task.id}`, 'aria-hidden': 'true', style: { pointerEvents: 'none' } },
-                h('circle', { className: 'wl-lock', cx: x + 14, cy: y - 16, r: 8 }),
-                h('path', { className: 'wl-lock-s', d: `M${x + 11.4},${y - 17.5} A2.6,2.6 0 0 1 ${x + 16.6},${y - 17.5}` }),
-                h('rect', { className: 'wl-lock-s', x: x + 10.5, y: y - 17, width: 7, height: 5, style: { fill: 'var(--ui-bg-chrome)', stroke: 'none' } })
+            { key: `sm-${m.key}`, className: 'wlf-smoke', 'data-smoke': m.key, 'aria-hidden': 'true', fill: INK.smoke },
+            h('circle', { cx: m.x - 8, cy: m.y - m.h / 2 - 4, r: 7 }),
+            h('circle', { cx: m.x + 4, cy: m.y - m.h / 2 - 10, r: 6 }),
+            h('circle', { cx: m.x + 14, cy: m.y - m.h / 2 - 2, r: 5 })
+          )
+        ),
+        MACHINES.map(m => {
+          const o = lay.occ[m.key]
+          if (!o) return null
+          const scan = m.kind === 'scan'
+          const tx = scan ? m.x + 40 : m.x
+          const ty = scan ? m.y - 24 : m.y - m.h / 2 - 24
+          if (o.state === 'work') {
+            const r = runsOf(o.task).filter(x => x.started_at <= (T ?? now)).pop()
+            const label = shortTitle(o.task, prefixOf.get(o.task.id)) + (r ? ` · ${fmtDur(t, Math.max(0, (T ?? now) - r.started_at))}` : '') + (o.extra.length ? ` · ${t('wingline.fx.more', o.extra.length)}` : '')
+            return h(Tag, { key: `tag-${m.key}`, x: tx, y: ty, w: scan ? 250 : 280, text: label, tone: RC[m.role], anchor: scan ? 'start' : 'middle' })
+          }
+          return h(Tag, { key: `tag-${m.key}`, x: tx, y: ty, w: 260, text: o.state === 'crash' ? t('wingline.fx.jam') : t('wingline.fx.pause'), kind: o.state, anchor: scan ? 'start' : 'middle' })
+        }),
+        ['intake', 'dock', 'scrap', 'bay'].map(z =>
+          lay.overflow[z]
+            ? h(
+                'text',
+                {
+                  key: `of-${z}`,
+                  className: 'wlf-note',
+                  x: z === 'dock' ? D.x + D.w - 20 : z === 'bay' ? B.x + B.w - 24 : z === 'intake' ? I.x + I.w - 14 : S.x + S.w - 14,
+                  y: z === 'dock' ? D.y + D.h - 16 : z === 'bay' ? B.y + 42 : z === 'intake' ? I.y + I.h - 14 : S.y + 26,
+                  textAnchor: 'end',
+                  fill: INK.mute
+                },
+                t('wingline.fx.more', lay.overflow[z])
               )
-            }),
-          MACHINES.map(m => {
-            const o = lay.occ[m.key]
-            if (!o) return null
-            const tx = m.kind === 'scan' ? m.x + 96 : m.x
-            const ty = m.kind === 'scan' ? m.y - 24 : m.y - m.h / 2 - 20
-            if (o.state === 'work') {
-              const r = runsOf(o.task).filter(x => x.started_at <= (T ?? now)).pop()
-              const label = o.task.title + (r ? ` · ${fmtDur(t, Math.max(0, (T ?? now) - r.started_at))}` : '') + (o.extra.length ? ` · ${t('wingline.fx.more', o.extra.length)}` : '')
-              return h(Tag, { key: `tag-${m.key}`, x: tx, y: ty, w: m.kind === 'scan' ? 150 : 220, text: label, tone: ROLE_TONE[m.role] })
-            }
-            return h(Tag, { key: `tag-${m.key}`, x: tx, y: ty, w: 190, text: o.state === 'crash' ? t('wingline.fx.jam') : t('wingline.fx.pause'), kind: o.state })
-          }),
-          MACHINES.filter(m => lay.occ[m.key] && lay.occ[m.key].state === 'crash').map(m =>
-            h(
-              'g',
-              { key: `sm-${m.key}`, className: 'wl-smoke', 'data-smoke': m.key, 'aria-hidden': 'true', style: { pointerEvents: 'none' } },
-              h('circle', { cx: m.x - 8, cy: m.y - m.h / 2 - 4, r: 7 }),
-              h('circle', { cx: m.x + 4, cy: m.y - m.h / 2 - 10, r: 6 }),
-              h('circle', { cx: m.x + 14, cy: m.y - m.h / 2 - 2, r: 5 })
-            )
-          ),
-          ['intake', 'dock', 'scrap', 'bay'].map(z =>
-            lay.overflow[z]
-              ? h(
-                  'text',
-                  {
-                    key: `of-${z}`,
-                    className: 'wl-overflow',
-                    x: z === 'dock' ? D.x + D.w - 20 : z === 'bay' ? B.x + B.w - 24 : z === 'intake' ? I.x + I.w - 14 : S.x + S.w - 14,
-                    y: z === 'dock' ? D.y + D.h - 16 : z === 'bay' ? B.y + 38 : z === 'intake' ? I.y + I.h - 14 : S.y + 22,
-                    textAnchor: 'end'
-                  },
-                  t('wingline.fx.more', lay.overflow[z])
-                )
-              : null
-          ),
-          callout
-        )
-      ),
-      drawer
+            : null
+        ),
+        callout
+      )
     ),
     h(
       'div',
@@ -2005,7 +2210,9 @@ function Page() {
   const [updatedAt, setUpdatedAt] = useState(null)
   const [failures, setFailures] = useState([])
   const [selId, setSelId] = useState(null)
-  const [fxOpen, setFxOpen] = useState(false)
+  const [place, setPlace] = useState(null)
+  const rootRef = useRef(null)
+  const autoRef = useRef(false)
   const [filter, setFilter] = useState(null)
   const [dlg, setDlg] = useState(null)
   const [notice, setNotice] = useState(null)
@@ -2056,22 +2263,61 @@ function Page() {
   const axis = useMemo(() => buildAxis(tasks, now), [tasks, now])
   const blocked = tasks.filter(x => x.status === 'blocked')
   const running = tasks.filter(x => x.status === 'running')
-  const fallbackSel = (blocked[0] || running[0] || tasks[0] || {}).id || null
-  const selected = byId.get(selId) || byId.get(fallbackSel) || null
+  const selected = byId.get(selId) || null
   const boardSlug = data?.board || board
+  const boards = useMemo(() => (Array.isArray(data?.boards) ? data.boards.filter(b => b && typeof b.slug === 'string') : []), [data])
+  useEffect(() => {
+    if (!data || autoRef.current || !boards.length) return
+    autoRef.current = true
+    const kept = readStore(BOARD_KEY, '')
+    if (kept && boards.some(b => b.slug === kept)) {
+      if (kept !== data.board) setBoard(kept)
+      return
+    }
+    if (tasks.length) return
+    const best = boards.filter(b => isNum(b.tasks) && b.tasks > 0).sort((a, b) => (b.last_activity || 0) - (a.last_activity || 0))[0]
+    if (best && best.slug !== data.board) {
+      setData(null)
+      setBoard(best.slug)
+    }
+  }, [data, boards, tasks.length])
+  useLayoutEffect(() => {
+    if (!selected) return undefined
+    const measure = () => {
+      let el = rootRef.current
+      while (el && el.parentElement && !/auto|scroll/.test(window.getComputedStyle(el).overflowY)) el = el.parentElement
+      const r = el ? el.getBoundingClientRect() : null
+      if (!r || r.width < 320 || r.height < 240) {
+        setPlace(null)
+        return
+      }
+      const top = Math.max(0, r.top)
+      const bottom = Math.min(window.innerHeight, r.bottom)
+      setPlace({ top: `${top}px`, height: `${bottom - top}px`, right: `${Math.max(0, window.innerWidth - r.right)}px` })
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [selected])
+  useEffect(() => {
+    if (!selected) return undefined
+    const onKey = e => {
+      if (e.key === 'Escape' && !dlg) setSelId(null)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [selected, dlg])
   const fail = useCallback((source, err) => {
     console.warn(`[${ID}] ${source} failed`, err)
     setFailures(f => [...f.slice(-5), { id: `${Date.now()}-${f.length}`, source, message: errText(err) }])
   }, [])
-  const select = useCallback(id => {
-    setSelId(id)
-    setFxOpen(true)
-  }, [])
+  const select = useCallback(id => setSelId(id), [])
   const pickView = v => {
     setView(v)
     writeStore(VIEW_KEY, v)
   }
   const pickBoard = slug => {
+    autoRef.current = true
     setBoard(slug)
     writeStore(BOARD_KEY, slug)
     setData(null)
@@ -2233,8 +2479,10 @@ function Page() {
     ...(Array.isArray(data?.errors) ? data.errors : []).map((e, i) => ({ id: `be-${i}`, source: t('wingline.problems.backend', String(e?.source || '')), message: String(e?.message || '') })),
     ...failures
   ]
-  const boards = Array.isArray(data?.boards) ? data.boards : []
-  const drawerProps = { task: selected, byId, now, t, onAction, log, note, setNote }
+  const groups = useMemo(() => groupsOf(tasks, t), [tasks, t])
+  const sheet = selected
+    ? h(Sheet, { task: selected, byId, now, t, onAction, log, note, setNote, place, onClose: () => setSelId(null), showReason: view === 'factory' })
+    : null
   let content
   if (!data) {
     content = loadErr
@@ -2243,34 +2491,20 @@ function Page() {
   } else if (!tasks.length) {
     content = h('div', { className: 'wl-state' }, t('wingline.empty'))
   } else if (view === 'factory') {
-    content = h(Factory, {
-      tasks,
-      now,
-      axis,
-      selId: fxOpen ? selected?.id : null,
-      onSelect: select,
-      onNotice: setNotice,
-      t,
-      drawer: fxOpen && selected ? h(Drawer, { ...drawerProps, className: 'wl-fx-dr', onClose: () => setFxOpen(false) }) : null
-    })
+    content = h(Factory, { tasks, now, axis, selId: selected?.id, onSelect: select, onNotice: setNotice, t })
   } else {
     content = h(
-      'div',
-      { className: 'wl-board' },
-      h(
-        'main',
-        { className: 'wl-main' },
-        h(NeedsYou, { list: blocked, selId: selected?.id, onSelect: setSelId, onAction, now, t }),
-        h(WorkingNow, { list: running, tasks, selId: selected?.id, onSelect: setSelId, now, t }),
-        h(Pipeline, { tasks, selId: selected?.id, onSelect: setSelId, now, t }),
-        h(Timeline, { tasks, axis, selId: selected?.id, onSelect: setSelId, filter, now, t })
-      ),
-      h(Drawer, drawerProps)
+      'main',
+      { className: 'wl-main' },
+      h(NeedsYou, { list: blocked, selId: selected?.id, onSelect: select, onAction, now, t }),
+      h(WorkingNow, { list: running, tasks, selId: selected?.id, onSelect: select, now, t }),
+      h(Pipeline, { groups, selId: selected?.id, onSelect: select, now, t }),
+      h(Timeline, { groups, axis, selId: selected?.id, onSelect: select, filter, now, t })
     )
   }
   return h(
     'div',
-    { className: 'wl-root', 'data-view': view },
+    { className: 'wl-root', 'data-view': view, ref: rootRef },
     h('style', null, CSS),
     h(
       'header',
@@ -2280,7 +2514,7 @@ function Page() {
         'select',
         { className: 'wl-select', 'aria-label': t('wingline.boardPick'), value: boardSlug || '', onChange: e => pickBoard(e.target.value) },
         boards.length
-          ? boards.map(b => h('option', { key: b.slug, value: b.slug }, b.name || b.slug))
+          ? boards.map(b => h('option', { key: b.slug, value: b.slug, 'data-tasks': isNum(b.tasks) ? b.tasks : '' }, isNum(b.tasks) ? t('wingline.boardOpt', b.name || b.slug, b.tasks) : b.name || b.slug))
           : h('option', { value: boardSlug || '' }, boardSlug || '—')
       ),
       h(
@@ -2327,6 +2561,7 @@ function Page() {
         )
       : null,
     content,
+    sheet,
     dlg ? h(Dialog, { dlg, setDlg, onRetry: runRetry, onNote: runNote, onArchive: runArchive, t }) : null,
     notice ? h('div', { className: 'wl-notice', role: 'status' }, h(Icon, { name: 'info' }), h('span', null, notice)) : null
   )

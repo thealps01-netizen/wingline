@@ -12,7 +12,9 @@ Rules
                template key `t(`wingline.x.${…}`)` has a leaf for each value the page can hand it
   panes        no `panes` area is registered; the page is a `routes` page plus a `sidebar.nav` row
   html         no innerHTML / outerHTML / insertAdjacentHTML / dangerouslySetInnerHTML anywhere
-  colors       no hex / rgb() / hsl() literal; every `var(--…)` is an app theme `--ui-*` variable
+  colors       no hex / rgb() / hsl() literal outside the Factory scene palette (`const INK = {…}`,
+               `const RC`, `const RC_LIGHT`: the owner's fixed light game palette); every `var(--…)` is an
+               app theme `--ui-*` variable
   kanban       every Kanban call goes through the `/api/plugins/kanban` prefix
   silentCatch  every `catch` logs or surfaces the error
   privacy      no shipped file names the author's account or a `<drive>:/Users/<name>` path other
@@ -198,8 +200,27 @@ def check_html(js: str) -> None:
         report(f"html: line {js[:match.start()].count(chr(10)) + 1} uses {match.group(0)} — render data as text")
 
 
+def palette_lines(js: str) -> set[int]:
+    lines = js.splitlines()
+    keep: set[int] = set()
+    inside = False
+    for line_no, line in enumerate(lines, 1):
+        if line.startswith("const INK = {"):
+            inside = True
+        if inside or re.match(r"const (RC|RC_LIGHT) = \{", line):
+            keep.add(line_no)
+        if inside and line == "}":
+            inside = False
+    if not keep:
+        report("colors: the Factory scene palette (const INK) is gone")
+    return keep
+
+
 def check_colors(js: str) -> None:
+    palette = palette_lines(js)
     for line_no, line in enumerate(js.splitlines(), 1):
+        if line_no in palette:
+            continue
         for hex_value in re.findall(r"(?<![&\w])#[0-9a-fA-F]{3,8}\b", line):
             if re.search(r"url\(#|#wl-", line) and not re.fullmatch(r"#[0-9a-fA-F]+", hex_value):
                 continue
