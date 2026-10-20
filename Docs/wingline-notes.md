@@ -130,3 +130,11 @@ snapshot while the blocked task was still accruing — unverified).
 - **Pipeline groups**: dependency chains first, then same-name pairs (`deck T1: …` + `deck T1
   review`, `… (retry)`), then families sharing a first word, then "Other tasks". The timeline uses
   the same groups so a task sits under the same heading in both places.
+- **Real-app shots** (`tests/shots/real-*.png`, 1440×900, board hermes-approvals-ui) come from an
+  isolated Hermes Desktop: own `HERMES_HOME` under `cache/scratch/wingline-real-home` (config copy
+  with the dispatcher off, read-only DB copies via SQLite backup, plugin tree from `git archive`),
+  own `--user-data-dir`, CDP port 9333. `*-before` = main (v0.1.0), the rest = `redesign`. A new
+  isolated profile starts with the plugin off (`hermes.desktop.pluginDecisions.v2` in
+  localStorage); the desktop half is copied into `desktop-plugins/` on renderer reload; a
+  minimised window reports `visibilityState: hidden`, so the capture script forces it visible or
+  the Board would (correctly) never poll.
