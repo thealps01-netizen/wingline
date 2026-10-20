@@ -1,0 +1,52 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Wingline · dense wireframe sample</title>
+<style>
+:root{--ink:#ece8de;--lab:#a3a096;--dim:#77746b;--line2:rgba(236,232,222,.32);--gold:#e0a944;--red:#ec6a84;--bg:#0b0b0c;--mono:"Cascadia Mono","Cascadia Code",Consolas,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg)}
+#app{position:relative;width:1180px;height:900px;overflow:hidden;background:var(--bg);color:var(--ink);font:12px/1.45 var(--mono);-webkit-font-smoothing:antialiased}
+#stage canvas{display:block}
+.layer{position:absolute;inset:0;pointer-events:none}
+.vig{position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 200px rgba(0,0,0,.75);background:linear-gradient(rgba(11,11,12,.8) 0,transparent 11%,transparent 91%,rgba(11,11,12,.85) 100%)}
+svg.lead{position:absolute;inset:0;overflow:visible}
+.tg{position:absolute;white-space:nowrap}
+.tg .n{font-size:12.5px;color:var(--ink);text-shadow:0 0 4px var(--bg),0 0 10px var(--bg)}
+.tg.r{text-align:right}
+.chip{display:inline-flex;align-items:center;gap:7px;height:21px;padding:0 8px;margin-top:3px;border:1px solid var(--line2);font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;background:rgba(11,11,12,.9)}
+.chip i{width:7px;height:7px;background:#a5a297}
+.chip.work{border-color:var(--gold);color:var(--gold)}.chip.work i{background:var(--gold)}
+.chip.fail{border-color:var(--red);color:var(--red)}.chip.fail i{background:var(--red)}
+.chip.wait{color:var(--lab)}.chip.wait i{background:none;border:1px dashed var(--lab)}
+.tel{position:absolute;font-size:12px;line-height:1.75;white-space:nowrap}
+.tel .k{color:var(--lab);text-transform:uppercase;letter-spacing:.08em}
+.tel b{font-weight:600;margin-left:8px}
+.tel.l .k::before{content:"▸  ";color:var(--dim)}
+.tel.r{text-align:right}.tel.r b::after{content:"  ◂";color:var(--dim);font-weight:400}
+.tab{position:absolute;top:18px;height:30px;display:flex;align-items:center;gap:10px;padding:0 30px 0 12px;font-size:12.5px;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+.tab svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.tab span{position:relative}.tab .back{color:var(--gold);border-right:1px solid rgba(224,169,68,.45);padding-right:10px;text-transform:none;letter-spacing:.02em}
+.ticks{position:absolute;top:54px;display:flex;align-items:center;gap:8px;font-size:11.5px;white-space:nowrap}
+.ticks .n{border:1px solid var(--line2);padding:0 5px;line-height:18px;background:rgba(11,11,12,.8)}
+.ticks .bar{display:flex;gap:2px}.ticks .bar i{width:3px;height:12px;background:#a5a297}.ticks .bar i.work{background:var(--gold)}.ticks .bar i.fail{background:var(--red)}
+.legend{position:absolute;right:20px;bottom:14px;display:flex;gap:16px;font-size:11.5px;color:var(--lab);text-transform:uppercase;letter-spacing:.08em}
+.legend span{display:flex;align-items:center;gap:7px}.legend i{width:9px;height:9px;background:var(--ink)}
+.legend i.work{background:var(--gold)}.legend i.fail{background:var(--red)}.legend i.wait{background:none;border:1px dashed var(--ink)}
+.hint{position:absolute;left:20px;bottom:14px;font-size:11.5px;color:var(--lab)}.hint b{color:var(--ink);font-weight:400}
+.side{position:absolute;left:0;top:300px;width:6px;height:60px;background:var(--gold);opacity:.7}
+.beacon{position:absolute;width:0;height:0}
+.beacon::before,.beacon::after{content:"";position:absolute;border:1.5px solid var(--red);border-radius:50%;left:-7px;top:-7px;width:14px;height:14px}
+.beacon::after{left:-14px;top:-14px;width:28px;height:28px;opacity:.4}
+.beacon i{position:absolute;left:-3px;top:-3px;width:6px;height:6px;border-radius:50%;background:var(--red)}
+</style>
+<div id="app">
+  <div id="stage"></div>
+  <div class="vig"></div>
+  <div class="layer" id="ov"></div>
+  <div class="layer" id="hud"></div>
+</div>
+<script>window.__errs=[];window.addEventListener('error',e=>window.__errs.push(String(e.message)+' @'+e.lineno));
+// three.js reports shader compile / link failures through console.error only; count them as page errors too
+{const ce=console.error;console.error=(...a)=>{window.__errs.push('console.error: '+String(a[0]).slice(0,300));ce(...a);};}</script>
+<script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js"}}</script>
+<script type="module" src="./planet.js"></script>

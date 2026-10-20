@@ -1,0 +1,9 @@
+{
+  "name": "wingline-world-prototype",
+  "private": true,
+  "description": "Standalone prototype of the Board's continuous-world zoom (planet to region to port); not loaded by the plugin.",
+  "license": "MIT",
+  "dependencies": {
+    "three": "0.186.1"
+  }
+}
