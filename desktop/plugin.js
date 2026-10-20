@@ -214,7 +214,7 @@ const BUNDLES = {
         queueEmpty: 'Queue empty',
         none: 'none',
         crates: n => (n === 1 ? 'for 1 crate' : `for ${n} crates`),
-        shipped: 'spent on shipped work',
+        shipped: 'shipped',
         inputs: (a, b) => `${a}/${b} inputs`,
         callLimit: 'STOPPED · TIME LIMIT',
         callCrash: 'STOPPED · CRASHED',
