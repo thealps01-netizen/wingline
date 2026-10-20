@@ -13,9 +13,9 @@ cd "$(dirname "$0")"
 bash build.sh
 fail=0
 ok() { if [ "$1" = 1 ]; then echo "PASS $2"; else echo "FAIL $2"; fail=1; fi; }
-LT=$(RUNS=3 timeout 300 "$EL" longtask.cjs 2>&1 | grep -E "^(LT|ERR)" || true)
-echo "$LT" | cut -c1-220
-ok "$(echo "$LT" | python -c "import sys,json; L=[json.loads(l[3:]) for l in sys.stdin if l.startswith('LT ')]; print(int(len(L)==3 and all(d['over50']==0 for d in L)))")" "freeze: no task over 50 ms in 3 loads"
+RUNS=3 timeout 300 "$EL" longtask.cjs > lc-lt.txt 2>&1 || true
+grep -E "^(LT|ERR)" lc-lt.txt | cut -c1-220
+ok "$(python -c "import sys,json; L=[json.loads(l[3:]) for l in open(sys.argv[1], encoding='utf-8') if l.startswith('LT ')]; print(int(len(L)==3 and all(d['over50']==0 for d in L)))" lc-lt.txt)" "freeze: no task over 50 ms in 3 loads"
 A=$(timeout 200 "$EL" canvas-eq.cjs 2>&1 | grep -E "^(H|ERR)" || true); B=$(QS='&slice=1' timeout 200 "$EL" canvas-eq.cjs 2>&1 | grep -E "^(H|ERR)" || true)
 ok "$([ -n "$A" ] && [ "${A#ERR}" = "$A" ] && [ "$A" = "$B" ] && echo 1 || echo 0)" "same world: paused build = build in one go (10 canvas hashes)"
 S=$(SW=1 OUT=lc-sw timeout 130 "$EL" ui-check.cjs 2>&1 | grep "^S after" || true); echo "$S" | cut -c1-200
@@ -24,5 +24,5 @@ S=$(VISIBLE=1 QS='&minfps=1000' OUT=lc-mf timeout 130 "$EL" ui-check.cjs 2>&1 | 
 ok "$(echo "$S" | grep -q '"fallback":"[0-9]* frames per second, needs 1000"' && echo 1 || echo 0)" "fallback: frame rate under the minimum"
 S=$(VISIBLE=1 OUT=lc-ok timeout 130 "$EL" ui-check.cjs 2>&1 | grep "^S after" || true); echo "$S" | cut -c1-200
 ok "$(echo "$S" | grep -q '"fallback":null' && echo "$S" | grep -q '"fps":[0-9]' && echo 1 || echo 0)" "no fallback at the default minimum on this machine"
-rm -f lc-*.png
+rm -f lc-*.png lc-lt.txt
 exit $fail
