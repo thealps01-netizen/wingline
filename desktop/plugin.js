@@ -503,7 +503,8 @@ function shortTitle(task, prefix) {
   return title.slice(prefix.length).replace(/^[\s:·—-]+/, '') || title
 }
 
-const WORLD_CAP = { boards: 12, pipelines: 12, builder: 3, review: 6, gate: 1, detective: 2 }
+const WORLD_CAP = { boards: 12, pipelines: 12, units: 6, label: 26 }
+const WORLD_ROLE = { builder: 0, review: 1, detective: 2, gate: 3 }
 const WORLD_RANK = { fail: 0, work: 1, wait: 2, done: 3 }
 const WORLD_CENTER = { lat: 10, lon: 0, radius: 46 }
 
@@ -596,25 +597,30 @@ function worldKey(g) {
   return `${g.kind}:${String(g.name).toLowerCase()}`
 }
 
+const clipLabel = s => (s.length > WORLD_CAP.label ? `${s.slice(0, WORLD_CAP.label - 1)}…` : s)
+
 function worldUnits(tasks, prefix) {
-  const roles = { builder: [], review: [], gate: [], detective: [] }
-  for (const x of tasks) {
+  const all = tasks.map((x, i) => {
     const st = worldState(x.status)
     const r = lastRun(x)
-    roles[roleOf(x)].push({
+    const short = shortTitle(x, prefix)
+    return {
       id: x.id,
       title: String(x.title || ''),
-      short: shortTitle(x, prefix),
+      short,
+      label: clipLabel(short),
+      role: roleOf(x),
       st,
+      i,
       agent: st === 'work' ? { profile: r?.profile || x.assignee || null, activity: x.activity?.text || null } : null
-    })
-  }
-  const more = {}
-  for (const k of Object.keys(roles)) {
-    more[k] = Math.max(0, roles[k].length - WORLD_CAP[k])
-    roles[k] = roles[k].slice(0, WORLD_CAP[k])
-  }
-  return { roles, more }
+    }
+  })
+  const gate = all.find(u => u.role === 'gate') || null
+  const rest = all.filter(u => u !== gate)
+  const pick = [...rest].sort((a, b) => WORLD_RANK[a.st] - WORLD_RANK[b.st] || WORLD_ROLE[a.role] - WORLD_ROLE[b.role] || a.i - b.i).slice(0, WORLD_CAP.units)
+  const units = pick.sort((a, b) => WORLD_ROLE[a.role] - WORLD_ROLE[b.role] || a.i - b.i)
+  const strip = ({ i, ...u }) => u
+  return { units: units.map(strip), gate: gate && strip(gate), more: rest.length - units.length }
 }
 
 function worldOf(data, t, keep) {
@@ -695,6 +701,10 @@ function worldOf(data, t, keep) {
       ...worldUnits(live, g.other ? '' : g.name)
     })
   }
+  const byName = new Map()
+  for (const p of [...pipes].sort((a, b) => (a.key < b.key ? -1 : 1))) byName.set(p.name, [...(byName.get(p.name) || []), p])
+  for (const same of byName.values()) if (same.length > 1) same.forEach((p, i) => (p.name = `${p.name} (${i + 1})`))
+  for (const p of pipes) p.label = clipLabel(p.name)
   pipes.sort((a, b) => WORLD_RANK[a.st] - WORLD_RANK[b.st] || b.last - a.last || (a.key < b.key ? -1 : 1))
   const shown = pipes.slice(0, WORLD_CAP.pipelines)
   const here = boards.find(b => b.current)

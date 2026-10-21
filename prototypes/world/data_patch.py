@@ -5,8 +5,9 @@ With data:
     header and counters are worldOf's planet chrome.
   - region: the open board (`current`) is the one the camera flies down to; its settlements are the board's pipelines
     (name, spend -> farm / village / port, state, chip); header is worldOf's region chrome.
-  - port: the first pipeline that is a port (worldOf lists the ones that need you first). Its warehouse is the builder,
-    one crane per review (up to 6, spread along the quay), the gate; trucks move only while a task of it is working.
+  - port: the first pipeline that is a port (worldOf lists the ones that need you first). Each task is a berth (crane
+    and ship, up to 6 within the quay's 4-berth width, closer together and with shorter ships beyond 4; the label says its role), the gate stands on the breakwater, the warehouse
+    is the port's own; trucks move only while a task of it is working.
     A board with no port pipeline stops with a note (village and farm sites in the world view are the next step).
 Runs after world_patch.py and before speedup.py. Every replacement must match once."""
 p = 'planet.js'; s = open(p, encoding='utf-8').read()
@@ -39,27 +40,30 @@ R("const N = new THREE.Vector3(...sph(18, 2, 1)),", "const N = new THREE.Vector3
 
 # region: pipelines from the data
 R("const placeType = usd =>",
-  "if (WL) YSK.splice(0, YSK.length, ...WL.region.pipelines.map(p => [p.name, p.usd, p.st]));\n"
+  "if (WL) YSK.splice(0, YSK.length, ...WL.region.pipelines.map(p => [p.label, p.usd, p.st]));\n"
   "// the pipeline whose port the camera flies down to\n"
   "const PORT_I = WL ? WL.region.pipelines.findIndex(p => p.place === 'harbor') : YSK.findIndex(r => r[0] === 'note-actions r1');\n"
   "const PORT_P = WL ? WL.region.pipelines[PORT_I] : null;\n"
   "if (WL && PORT_I < 0) throw new Error('world data: this board has no port pipeline yet (village and farm sites come next)');\n"
   "const placeType = usd =>")
-R("const LIST = kind === 'mixed' ? YSK.map(", "const LIST = kind === 'mixed' && WL ? WL.region.pipelines.map(p => [p.name, p.st, p.chip]) : kind === 'mixed' ? YSK.map(")
+R("const LIST = kind === 'mixed' ? YSK.map(", "const LIST = kind === 'mixed' && WL ? WL.region.pipelines.map(p => [p.label, p.st, p.chip]) : kind === 'mixed' ? YSK.map(")
 R("chrome(kind === 'mixed' ? { tab: 'You Should Know · 1 needs you',",
   "chrome(kind === 'mixed' && WL ? { ...WL.region.chrome, tabCol: TONE[WL.region.chrome.tabTone], hint } : kind === 'mixed' ? { tab: 'You Should Know · 1 needs you',")
 
 # port: the chosen pipeline
 R("const i = YSK.findIndex(r => r[0] === 'note-actions r1'), s = S[i],", "const i = PORT_I, s = S[i],")
 RP("items.push({ name: 'build', st: 'done', chip: 'done · builder', at: tp(m, [0, 17, 0]) }); }",
-  "for (const u of WL ? PORT_P.roles.builder.slice(0, 1) : [{ short: 'build', st: 'done' }]) items.push({ name: u.short, st: u.st, chip: `${WORD[u.st]} · builder`, at: tp(m, [0, 17, 0]) }); }")
+  "for (const u of WL ? [] : [{ short: 'build', st: 'done' }]) items.push({ name: u.short, st: u.st, chip: `${WORD[u.st]} · builder`, at: tp(m, [0, 17, 0]) }); }")
 RP("const REV = [['security', 'done', -105], ['ux', 'work', -35], ['ui', 'work', 35], ['code', 'done', 105]];",
-  "const REV = WL ? PORT_P.roles.review.map((u, k, a) => [u.short, u.st, (k - (a.length - 1) / 2) * 70]) : [['security', 'done', -105], ['ux', 'work', -35], ['ui', 'work', 35], ['code', 'done', 105]];\n"
+  "const BERTH = WL ? Math.min(70, 210 / Math.max(1, PORT_P.units.length - 1)) : 70;\n  const REV = WL ? PORT_P.units.map((u, k, a) => [u.label, u.st, (k - (a.length - 1) / 2) * BERTH, u.role]) : [['security', 'done', -105], ['ux', 'work', -35], ['ui', 'work', 35], ['code', 'done', 105]];\n"
   "  const IDLE = !!WL && !PORT_P.counts.work;")
+RP("ship(fr(x, -.4, -18, 0), 62, 13,", "ship(fr(x, -.4, -18, 0), WL ? Math.min(62, BERTH * .88) : 62, 13,")
+RP("for (const [n, st, x] of REV) {", "for (const [n, st, x, role = 'review'] of REV) {")
+RP("items.push({ name: n, st, chip: `${WORD[st]} · review`, at }); }", "items.push({ name: n, st, chip: `${WORD[st]} · ${role}`, at }); }")
 RP("const g = capture(() => truck(0, 0, 0, cg)); ANIM.movers.push(t => { const c = (t / 11 + ph) % 1,",
   "const g = capture(() => truck(0, 0, 0, IDLE ? INK : cg)); ANIM.movers.push(t => { const c = IDLE ? 0 : (t / 11 + ph) % 1,")
 RP("items.push({ name: 'gate', st: 'wait', chip: 'waiting · all 4 reviews', at: [0, 9, -180] }); }",
-  "for (const u of WL ? PORT_P.roles.gate : [{ short: 'gate', st: 'wait', chip: 'waiting · all 4 reviews' }]) items.push({ name: u.short, st: u.st, chip: u.chip || `${WORD[u.st]} · gate`, at: [0, 9, -180] }); }")
+  "for (const u of WL ? (PORT_P.gate ? [PORT_P.gate] : []) : [{ label: 'gate', st: 'wait', chip: 'waiting · all 4 reviews' }]) items.push({ name: u.label, st: u.st, chip: u.chip || `${WORD[u.st]} · gate`, at: [0, 9, -180] }); }")
 
 # HUD: planet, click and port from the data
 RIN('runWorld', "chrome({ tab: 'All boards · 3 need you', tabCol: '#ec6a84', ticks: { label: '4/7 boards clear', list: BOARDS.map(b => b.st) }, tl: [['Boards', '7'], ['Tasks', '137'], ['Spent', '$218.66']], tr: [['Working', '02'], ['Needs you', '03'], ['Done', '129']], hint: 'Each <b>light is a board</b> · click one to fly down to it' });\n  SNAP.planet",

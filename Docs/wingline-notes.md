@@ -154,8 +154,14 @@ snapshot while the blocked task was still accruing — unverified).
     done. The Board view's header has no column for `scheduled` and `review`; the world shows them
     as waiting.
   - Limits keep the scene legible: 12 labelled boards (the open board first, then the ones that need
-    you, then working, waiting, newest), 12 settlements (needs you first, then newest), per site 3
-    builders, 6 reviews, 1 gate, 2 detectives. The rest is returned as a count (`more`) for the HUD.
+    you, then working, waiting, newest), 12 settlements (needs you first, then newest), per site 6
+    tasks plus the gate. The rest is returned as a count (`more`) for the HUD.
+  - Each task of a site is one berth, workshop or field (`units`, builder first, then reviews, then
+    detectives); its role is written on its label, and the gate stands apart (`gate`). A model by role
+    (warehouse = builder, crane = review) left a family of nine builder tasks as an empty quay. Beyond
+    6 tasks the ones that need you or are working are kept, so an agent is never the one left out.
+  - Labels are cut at 26 characters with an ellipsis (`label`); `title` and `name` keep the full
+    text. Two pipelines with one name on a board are numbered "(1)", "(2)" in key order.
   - Board spots: a sunflower pattern of 48 spots on the planet's visible face (about 12° apart),
     96 above 48 boards, and so on. A board's preferred spot is its slug's FNV-1a hash; collisions take
     the next free spot. Hashing alone moved one or two boards in 37 of 500 tries when a board was
