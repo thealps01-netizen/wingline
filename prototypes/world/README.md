@@ -20,18 +20,26 @@ stretches.
 - **Staged data:**
   - The task states inside the port (which crane is working or done).
   - The click on `note-actions r1` at 13.1 s.
-- **Not done yet:** wiring to the live Kanban API, real clicks and the agent stream.
-  That is the plugin integration step.
+- **Real data:** `planet.html?view=world&data=<file>` draws a live Kanban instead of the
+  snapshot. The file is the plugin's own converter output (`worldOf` in `desktop/plugin.js`),
+  made with `node world-data.mjs <overview.json> data-<name>.json [board slug]` (needs
+  `cd ../../tests && npm ci` once; `data-*.json` is not tracked). The open board is the region;
+  the camera flies to its first port pipeline. Without `data=` the page is the snapshot, pixel
+  for pixel (10 canvas hashes, `canvas-eq.cjs`).
+- **Not done yet:** village and farm sites inside the world (a board without a port pipeline stops
+  with a note), real clicks, live updates and the agent stream. That is the plugin integration step.
 
 ## Files
 
 `build.sh` turns the sources into `planet.js` in this order: `planet.base.js` →
-`world_patch.py` → `speedup.py` → `slice.mjs` → `fallback.py`.
+`world_patch.py` → `data_patch.py` → `speedup.py` → `slice.mjs` → `fallback.py`.
 
 | File | Role |
 |---|---|
 | `planet.base.js` | Base scene code: drawing helpers, the planet, region and site builders, and the older three-scene `view=descent`. |
 | `world_patch.py` | Turns `planet.base.js` into the world view. Every replacement must match exactly once, so a drifted base fails loudly. It also inlines `world.part.js`. |
+| `data_patch.py` | Real Kanban data with `data=<file>`: boards and labels on the planet, the open board's pipelines as settlements, the port pipeline's builder, reviews (up to 6 cranes) and gate, and the HUD from `worldOf`'s chrome. Trucks stand still while no task of the port is working. |
+| `world-data.mjs` | Makes a `data=` file from a Kanban overview with the plugin's own `worldOf`. |
 | `world.part.js` | The world view itself: the region draped onto the planet, the port model placed inside the region, the level-of-detail line shaders, the camera timeline and the HUD. |
 | `speedup.py` | Load-time speed-ups that keep the picture the same: outline edges are computed once per shape and reused, the region height field is memoised, and the river distance check skips far chunks. The full measurement gave the same numbers before and after. |
 | `slice.mjs` | Makes the build pause every 12 ms, so the page keeps responding while it builds. It parses `planet.js` (acorn) and turns the build functions into generators with pause points in their loops and between their steps; the GPU compiles the shaders in the background before the first frame. A loading line ("Charting 7 boards") stands in for the HUD meanwhile. Recorders (`rec=1`) still build in one go. |

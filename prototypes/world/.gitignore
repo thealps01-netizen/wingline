@@ -13,3 +13,4 @@ measure.log
 checks.log
 lc-*.png
 ui-*.png
+data-*.json
