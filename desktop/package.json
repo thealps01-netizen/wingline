@@ -1,0 +1,19 @@
+{
+  "name": "wingline-desktop",
+  "private": true,
+  "description": "Builds desktop/plugin.js from desktop/src (the page and the Board's world view) with three.js bundled in.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node build/build.mjs",
+    "check": "node build/build.mjs --check"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "acorn": "8.19.0",
+    "acorn-walk": "8.3.5",
+    "esbuild": "0.25.10"
+  }
+}

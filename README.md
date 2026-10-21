@@ -4,8 +4,13 @@ A Hermes Desktop page for people who run Hermes Kanban boards. It shows what nee
 what is running now, what is queued and done, and what each task cost. You can look at the same
 data two ways:
 
-- **Board**: the "Needs you" strip, work in progress, a pipeline map (parents → children) and a
-  timeline. The timeline shortens idle gaps but draws working time at its true length.
+- **Board**: a world you zoom through, drawn as a black-and-white atlas: a planet whose lights are
+  your boards, a region whose farms, villages and ports are a board's pipelines (the place grows with
+  what it cost), and a site where every task is a field, workshop or berth and the agents at work
+  move. Click to fly down, "◂ back" to rise; a task opens its details and log. Below it: the "Needs
+  you" strip, work in progress, a pipeline map (parents → children) and a timeline that shortens idle
+  gaps but draws working time at its true length. On a computer without hardware WebGL2 the Board
+  shows the lists only and says why.
 - **Factory**: a production line where tasks move as packages between machines (build → review →
   gate → shipped). A stopped task jams its machine and drops into a red "Needs you" bin. You can
   watch it live or replay the board's history at 1×, 4× or 16×.
@@ -33,11 +38,14 @@ a price.
 Hermes Desktop: **Capabilities → Plugins**, install `thealps01-netizen/wingline`, then **Rescan**.
 CLI equivalent: `hermes plugins install thealps01-netizen/wingline --enable`.
 
-Requires Hermes 0.22.2 or later (the version it is tested against).
+Requires Hermes 0.22.2 or later (the version it is tested against). `desktop/plugin.js` is about
+750 KB because three.js is bundled in; Hermes 0.22.2 reads plugin sources in full up to 16 MiB.
 
 ## Development
 
-See `AGENTS.md` for the gates. Design notes: `Docs/wingline-notes.md`. Build contract:
+The page lives in `desktop/src/` (`page.js`, `world.js`); `desktop/plugin.js` is generated from it
+(`cd desktop && npm ci && node build/build.mjs`) and committed, so installing from Git needs no
+build step. See `AGENTS.md` for the gates. Design notes: `Docs/wingline-notes.md`. Build contract:
 `Docs/CONTRACT.md`.
 
 MIT licence.

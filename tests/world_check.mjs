@@ -32,7 +32,7 @@ const OUT_REL = '.out/'
 const OUT = `${HERE}${OUT_REL}`
 mkdirSync(OUT, { recursive: true })
 writeFileSync(`${OUT}world-sdk-stub.mjs`, 'export const host = {}\nexport function usePluginI18n() { return k => k }\n')
-const src = readFileSync(`${HERE}../desktop/plugin.js`, 'utf8').replace("'@hermes/plugin-sdk'", `'${HERE_URL.href}${OUT_REL}world-sdk-stub.mjs'`)
+const src = readFileSync(`${HERE}../desktop/plugin.js`, 'utf8').replace(/(['"])@hermes\/plugin-sdk\1/, `'${HERE_URL.href}${OUT_REL}world-sdk-stub.mjs'`)
 writeFileSync(`${OUT}world-under-test.mjs`, src)
 const mod = await import(`${HERE_URL.href}${OUT_REL}world-under-test.mjs`)
 const { worldOf } = mod

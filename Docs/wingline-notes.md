@@ -102,7 +102,7 @@ snapshot while the blocked task was still accruing — unverified).
 - `activity` is filled only while the task is `running`, from the linked session with the newest
   `last_activity_at`.
 
-## Desktop (`desktop/plugin.js`)
+## Desktop (`desktop/src/page.js`, built into `desktop/plugin.js`)
 
 - **Stop reasons follow the recorded outcome.** Hermes writes `timed_out` when its dispatcher kills
   a worker at the limit and `crashed` when the worker vanished. A run can be `crashed` after running
@@ -170,6 +170,61 @@ snapshot while the blocked task was still accruing — unverified).
   - Pipeline keys: a chain is keyed by its smallest task id, a pair or family by kind and name, and
     "Other tasks" by `other`; `seed` is the key's hash. They do not depend on order, time or state,
     so the scene can place settlements by seed and keep them put.
-  - Titles and names are returned as stored. The scene must insert them as text (`textContent`),
-    never as HTML; the prototype's `chrome()` builds HTML strings and must be ported to DOM nodes.
-  - `worldOf` is a named export next to the default one; Hermes' loader reads only `default`.
+  - Titles and names are returned as stored. The scene inserts them as text (`textContent`), never
+    as HTML (`world.js` builds every label and HUD element as DOM nodes).
+  - `worldOf` and `mountWorld` are named exports next to the default one; Hermes' loader reads only
+    `default`, the tests read the named ones.
+  - Each unit carries its chip (`unitChip`: state · role, both translated) and the region chrome a
+    `back` ("All boards"), so the scene holds no English of its own beyond what the page hands it.
+
+## Build: sources and the generated `desktop/plugin.js`
+
+- Hermes loads one file, `desktop/plugin.js`, and refuses any import but `@hermes/plugin-sdk` and
+  `react*`. The world view needs three.js, so `plugin.js` is now generated: `desktop/build/build.mjs`
+  bundles `desktop/src/page.js` (the page) and `desktop/src/world.js` (the world view) with three.js
+  0.186.1 and minifies them (about 750 KB; three's licence notice is kept at the end). The SDK and
+  React stay imports, which the loader maps to the app's own copies. Owner's decision (option A).
+- Edit the sources, never `plugin.js`; `node build/build.mjs --check` fails when `plugin.js` is stale,
+  and any esbuild warning fails the build (a duplicate i18n key, `fx.pause`, had hidden the Factory's
+  "Pause replay" label behind "Paused — needs input"; the machine tag is now `fx.held`).
+- `audit_static.py` audits the two sources, not the bundle (three.js has comments and colours of its
+  own). The world view's colours are the fixed atlas palette `WORLD_PALETTE` (ground, line, gold,
+  red, grey), the second palette the audit accepts after the Factory's; tints are those colours with
+  an alpha byte appended in code, so no other literal exists.
+- Size: the desktop reads a plugin's source in full up to 16 MiB (`hermes:readPluginSource`, checked
+  in Hermes 0.22.2, which `plugin.yaml` requires). The older preview read cut at 512 KiB, which would
+  load half of this file; that is why the version floor matters.
+- `slice.mjs` (from the prototype) turns the build functions inside `buildWorld()` into generators
+  with pause points; `mountWorld()` runs them in 12 ms slices between frames, so building never
+  blocks the app.
+
+## World view (`desktop/src/world.js`)
+
+- Board view = the world on top, the four lists (Needs you, Working now, Pipeline, Timeline) below
+  it, so no action moved. One camera path, planet → region → site; the page stops at three points on
+  it and flies between them at 4× the prototype's recorded speed (about 3 s per leg). Labels and the
+  "◂ back" in the tab are buttons (Enter or Space work too):
+  - a board on the planet: the open one flies down to its region; another one opens that board (the
+    page's own board pick): the camera rises to the planet while the new world builds, the planet
+    turns to the new board, and the camera flies down.
+  - a pipeline in the region: the one built up close flies down at once; another one is built up
+    close in the background (the whole world is rebuilt with that focus; about 4 s on the owner's
+    machine, the region does not move because settlement spots and seeds are kept), then the camera
+    flies down.
+  - a task at a site opens the page's detail sheet; a running task also opens its log, which is the
+    agent's stream.
+- Live data: every poll gives the scene the new `worldOf`. If only numbers in the HUD changed, the
+  HUD is redrawn in place (no 3D work). If a board, pipeline or shown task changed state, label or
+  chip, the world is rebuilt in the background and swapped in at the same camera; spots and random
+  seeds per pipeline keep everything else where it was (measured: 0.3% of pixels changed when one
+  task turned running). The scene is never rebuilt for a poll that changed nothing it draws.
+- Not done, measured or decided yet: building only the one changed settlement (today the whole world
+  is rebuilt in the background, about 4 s of sliced work); turning the planet without a rebuild.
+- The stage is drawn at a fixed 1180×900 (the framing the prototype was tuned at) and scaled to fit
+  the pane, letterboxed on the scene's black. The pixel ratio is chosen once at mount (scale ×
+  device pixel ratio, 1 to 2), because the point sizes are baked into the materials at build.
+- Falls back to the lists with a one-line note when WebGL2 is missing, the renderer is a software
+  one (SwiftShader, llvmpipe: 2 fps measured), the first 40 frames run under 30 fps, or the build
+  throws. Hidden pages draw nothing.
+- `tests/world_render.cjs` renders the built `plugin.js` in Electron (WebGL, off screen) and clicks
+  through every step above; it needs the Electron binary of a Hermes desktop install.

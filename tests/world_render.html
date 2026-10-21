@@ -1,0 +1,45 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Wingline world view harness</title>
+<style>html,body{margin:0;background:black}#host{width:1180px;height:900px}</style>
+<script>
+window.__errs = []
+addEventListener('error', e => window.__errs.push(String(e.message)))
+addEventListener('unhandledrejection', e => window.__errs.push('rejection: ' + String(e.reason && e.reason.message || e.reason)))
+{ const ce = console.error; console.error = (...a) => { window.__errs.push('console.error: ' + String(a[0]).slice(0, 300)); ce(...a) } }
+</script>
+<script type="importmap">{"imports":{"@hermes/plugin-sdk":"./world_render_sdk.mjs","react":"./world_render_react.mjs","react/jsx-runtime":"./world_render_react.mjs"}}</script>
+<div id="host"></div>
+<script type="module">
+import plugin, { worldOf, mountWorld } from '../desktop/plugin.js'
+const q = new URLSearchParams(location.search)
+const bundles = {}
+plugin.register({ i18n: { register: b => Object.assign(bundles, b), t: k => k }, register() {}, storage: { get: (k, f) => f, set() {} } })
+const t = (key, ...args) => {
+  let node = bundles.en
+  for (const p of key.split('.')) node = node?.[p]
+  return typeof node === 'function' ? node(...args) : typeof node === 'string' ? node : key
+}
+const all = await fetch(q.get('overview')).then(r => r.json())
+const overviews = Array.isArray(all.tasks) ? { [all.board]: all } : all
+const slug = q.get('board') || Object.keys(overviews)[0]
+const H = window.__harness = { picks: [], swaps: [], slowFrames: [], longtasks: [], fallback: null, t, worldOf, overviews }
+new PerformanceObserver(l => { for (const e of l.getEntries()) H.longtasks.push(Math.round(e.duration)) }).observe({ type: 'longtask', buffered: true })
+const words = {
+  legend: { work: t('wingline.world.st.work'), done: t('wingline.world.st.done'), fail: t('wingline.world.st.fail'), wait: t('wingline.world.st.wait') },
+  hint: Object.fromEntries(['planet', 'region', 'harbor', 'village', 'farm'].map(k => [k, t(`wingline.world.hint.${k}`)])),
+  loading: t('wingline.world.loading'),
+  updating: t('wingline.world.updating')
+}
+H.data = worldOf(overviews[slug], t, null)
+H.t0 = performance.now()
+H.api = mountWorld(document.getElementById('host'), {
+  data: H.data,
+  words,
+  stop: q.get('stop') || 'region',
+  onPick: (kind, id) => H.picks.push([kind, id]),
+  onFallback: reason => { H.fallback = reason },
+  onSwap: info => H.swaps.push({ ...info, ms: Math.round(performance.now() - H.t0) }),
+  onSlowFrame: ms => H.slowFrames.push(ms)
+})
+</script>

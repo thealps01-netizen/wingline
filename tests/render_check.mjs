@@ -68,7 +68,7 @@ export const host = {
 export default { host }
 `)
 
-const src = readFileSync(SRC, 'utf8').replace("'@hermes/plugin-sdk'", `'${HERE_URL.href}${OUT_REL}sdk-stub.mjs'`)
+const src = readFileSync(SRC, 'utf8').replace(/(['"])@hermes\/plugin-sdk\1/, `'${HERE_URL.href}${OUT_REL}sdk-stub.mjs'`)
 writeFileSync(`${OUT}plugin-under-test.mjs`, src)
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true, url: 'http://localhost/' })
@@ -196,7 +196,9 @@ check(restCalls[0] === '/overview', 'first read is /overview on the current boar
 check(q('.wl-root')?.getAttribute('data-view') === 'board', 'Board is the default view')
 check(rawKeys().length === 0, `Board: no raw i18n keys (${rawKeys().slice(0, 3).join(', ')})`)
 const main = q('.wl-main')
-check(main?.firstElementChild?.getAttribute('aria-labelledby') === 'wl-needs-h', 'Needs you is the first section of the Board')
+const lists = [...(main?.children || [])].filter(e => !e.matches('.wl-world, .wl-world-off'))
+check(lists[0]?.getAttribute('aria-labelledby') === 'wl-needs-h', 'Needs you is the first list section of the Board')
+check(main?.firstElementChild?.matches('.wl-world-off') && /World view is off on this computer \(no WebGL2\)/.test(main.firstElementChild.textContent), `without WebGL2 the Board says the world view is off and shows the lists (${main?.firstElementChild?.textContent?.slice(0, 80)})`)
 const attn = qa('.wl-attn')
 check(attn.length === 1 && attn[0].getAttribute('data-id') === BLOCKED.id, 'Needs you lists the one blocked task')
 check(/Retries used \d+\/\d+/.test(attn[0].textContent) && /worked/.test(attn[0].textContent), 'the blocked card shows retries and time worked')

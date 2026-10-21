@@ -1,5 +1,9 @@
 # World prototype: one continuous zoom from planet to port
 
+> **Superseded for the plugin.** The Board's world view now lives in `desktop/src/world.js`, ported
+> from this prototype's build output (with real clicks, live updates and DOM labels) and built into
+> `desktop/plugin.js`. This folder stays as the record of how the scene was tuned.
+
 A standalone prototype of the Board's zoom. The plugin does not load it. It shows the
 Kanban as one world, at three levels of the same scene:
 

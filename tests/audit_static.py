@@ -2,20 +2,25 @@
 
 Run: python tests/audit_static.py        (exit 0 = clean, 1 = problems named, one per line)
 
+What it reads: the hand-written sources desktop/src/page.js (the page) and desktop/src/world.js (the Board's world
+view). desktop/plugin.js is generated from them with three.js bundled in (desktop/build/build.mjs); its freshness is
+checked by `node build/build.mjs --check`, not here. Every rule below applies to both sources unless it says "page".
+
 Rules
-  undefined    no undefined or unused identifier in desktop/plugin.js (ESLint `no-undef` and
-               `no-unused-vars`, run with the Hermes core's own eslint through node)
-  comments     production plugin.js carries no comments (the why lives in Docs/wingline-notes.md)
-  bundle       exactly one `const BUNDLES`, holding exactly one locale `en`, whose only top key is
+  undefined    no undefined or unused identifier (ESLint `no-undef` and `no-unused-vars`, run with the Hermes
+               core's own eslint through node)
+  comments     the sources carry no comments (the why lives in Docs/wingline-notes.md)
+  bundle       (page) exactly one `const BUNDLES`, holding exactly one locale `en`, whose only top key is
                `wingline` (the i18n prefix)
-  i18n         every literal `t('wingline.…')` key resolves to a leaf of the English bundle, and every
+  i18n         (page) every literal `t('wingline.…')` key resolves to a leaf of the English bundle, and every
                template key `t(`wingline.x.${…}`)` has a leaf for each value the page can hand it
-  panes        no `panes` area is registered; the page is a `routes` page plus a `sidebar.nav` row
+  panes        (page) no `panes` area is registered; the page is a `routes` page plus a `sidebar.nav` row
   html         no innerHTML / outerHTML / insertAdjacentHTML / dangerouslySetInnerHTML anywhere
-  colors       no hex / rgb() / hsl() literal outside the Factory scene palette (`const INK = {…}`,
-               `const RC`, `const RC_LIGHT`: the owner's fixed light game palette); every `var(--…)` is an
-               app theme `--ui-*` variable
-  kanban       every Kanban call goes through the `/api/plugins/kanban` prefix
+  colors       no hex / rgb() / hsl() literal outside the fixed palettes the owner approved: in the page the
+               Factory scene palette (`const INK = {…}`, `const RC`, `const RC_LIGHT`), in the world view the
+               atlas palette (`const WORLD_PALETTE = {…}`: black ground, white line, gold, red, grey); every
+               `var(--…)` is an app theme `--ui-*` variable
+  kanban       (page) every Kanban call goes through the `/api/plugins/kanban` prefix
   silentCatch  every `catch` logs or surfaces the error
   privacy      no shipped file names the author's account or a `<drive>:/Users/<name>` path other
                than the fixture name `someone`
@@ -32,7 +37,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-JS = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "desktop" / "plugin.js"
+JS = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "desktop" / "src" / "page.js"
+WORLD_JS = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else ROOT / "desktop" / "src" / "world.js"
 ACCOUNT = re.compile("ene" + "sa", re.I)
 USER_PATH = re.compile(r"[A-Za-z]:(?:[/\\]|\\\\)+Users(?:[/\\]|\\\\)+([A-Za-z0-9._-]+)", re.I)
 FIXTURE_USERS = {"someone"}
@@ -97,9 +103,9 @@ def check_lint(js_path: Path) -> None:
         return
     out = json.loads(run.stdout)
     for c in out["comments"]:
-        report(f"comments: line {c['line']} carries a comment ({c['text']!r}) — production plugin.js has none")
+        report(f"comments: {js_path.name} line {c['line']} carries a comment ({c['text']!r}) — the sources have none")
     for m in out["messages"]:
-        report(f"undefined: line {m['line']} {m['rule'] or 'parse'}: {m['message']}")
+        report(f"undefined: {js_path.name} line {m['line']} {m['rule'] or 'parse'}: {m['message']}")
 
 
 def _block(js: str, start: int) -> str:
@@ -200,24 +206,23 @@ def check_html(js: str) -> None:
         report(f"html: line {js[:match.start()].count(chr(10)) + 1} uses {match.group(0)} — render data as text")
 
 
-def palette_lines(js: str) -> set[int]:
+def palette_lines(js: str, start: str, name: str, singles: str | None = None) -> set[int]:
     lines = js.splitlines()
     keep: set[int] = set()
     inside = False
     for line_no, line in enumerate(lines, 1):
-        if line.startswith("const INK = {"):
+        if line.startswith(start):
             inside = True
-        if inside or re.match(r"const (RC|RC_LIGHT) = \{", line):
+        if inside or (singles and re.match(singles, line)):
             keep.add(line_no)
         if inside and line == "}":
             inside = False
     if not keep:
-        report("colors: the Factory scene palette (const INK) is gone")
+        report(f"colors: the {name} is gone")
     return keep
 
 
-def check_colors(js: str) -> None:
-    palette = palette_lines(js)
+def check_colors(js: str, palette: set[int]) -> None:
     for line_no, line in enumerate(js.splitlines(), 1):
         if line_no in palette:
             continue
@@ -251,7 +256,7 @@ def check_catches(js: str) -> None:
 
 
 def check_privacy() -> None:
-    files = [JS, *sorted((HERE / "fixtures").glob("*.json")), *sorted(p for p in HERE.glob("*.*") if p.suffix in {".mjs", ".cjs", ".py", ".json"})]
+    files = [JS, WORLD_JS, *sorted((HERE / "fixtures").glob("*.json")), *sorted(p for p in HERE.glob("*.*") if p.suffix in {".mjs", ".cjs", ".py", ".json"})]
     for path in files:
         text = path.read_text(encoding="utf-8", errors="replace")
         rel = path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else path.name
@@ -264,13 +269,18 @@ def check_privacy() -> None:
 
 def main() -> int:
     js = JS.read_text(encoding="utf-8")
+    world = WORLD_JS.read_text(encoding="utf-8")
     check_lint(JS)
+    check_lint(WORLD_JS)
     check_bundle_and_i18n(js)
     check_registration(js)
     check_html(js)
-    check_colors(js)
+    check_html(world)
+    check_colors(js, palette_lines(js, "const INK = {", "Factory scene palette (const INK)", r"const (RC|RC_LIGHT) = \{"))
+    check_colors(world, palette_lines(world, "const WORLD_PALETTE = {", "world atlas palette (const WORLD_PALETTE)"))
     check_kanban(js)
     check_catches(js)
+    check_catches(world)
     check_privacy()
     for problem in problems:
         print(f"PROBLEM  {problem}")

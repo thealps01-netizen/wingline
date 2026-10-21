@@ -35,7 +35,7 @@ export function usePluginI18n(id) {
 export const host = { navigate: () => {}, composer: { insertText: async () => false } }
 export default { host }
 `)
-const src = readFileSync(`${HERE}../desktop/plugin.js`, 'utf8').replace("'@hermes/plugin-sdk'", `'${HERE_URL.href}${OUT_REL}sdk-stub.mjs'`)
+const src = readFileSync(`${HERE}../desktop/plugin.js`, 'utf8').replace(/(['"])@hermes\/plugin-sdk\1/, `'${HERE_URL.href}${OUT_REL}sdk-stub.mjs'`)
 writeFileSync(`${OUT}plugin-under-test.mjs`, src)
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true, url: 'http://localhost/' })
