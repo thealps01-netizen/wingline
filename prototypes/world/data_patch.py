@@ -36,7 +36,8 @@ R("const [KIND, LEVEL] = view.split('-');",
 # planet: boards from the data, labels only where worldOf put one
 R("const BOARDS = [\n", "const BOARDS = WL ? WL.boards.map(b => ({ ...b })) : [\n")
 R("    items.push({ name: b.name, st: b.st, chip: b.chip, at: sph(b.lat, b.lon, 100.3) });\n  }",
-  "    if (b.labeled !== false) items.push({ name: b.name, st: b.st, chip: b.chip, at: sph(b.lat, b.lon, 100.3) });\n  }")
+  "    if (b.labeled !== false) items.push({ name: b.name, st: b.st, chip: b.chip, at: sph(b.lat, b.lon, 100.3), id: b.slug });\n  }")
+R("{ items.push({ name: b.name, st: b.st, chip: b.chip, at: sph(b.lat, b.lon, 100.3) }); continue; }", "{ items.push({ name: b.name, st: b.st, chip: b.chip, at: sph(b.lat, b.lon, 100.3), id: WL ? b.slug : undefined }); continue; }")
 R("if (WORLD && b.name === 'You Should Know') {", "if (WORLD && isHome(b)) {")
 R("const DETAIL = [4, 32, -12, 16];",
   "const isHome = b => (WL ? b.current : b.name === 'You Should Know');\n"
@@ -46,15 +47,20 @@ R("const N = new THREE.Vector3(...sph(18, 2, 1)),", "const N = new THREE.Vector3
 
 # region: pipelines from the data
 R("const placeType = usd =>",
-  "if (WL) YSK.splice(0, YSK.length, ...WL.region.pipelines.map(p => [p.label, p.usd, p.st]));\n"
+  "// settlements in key order (worldOf ranks by state, which changes): a state change leaves every spot and seed where it was\n"
+  "const PIPES_W = WL ? [...WL.region.pipelines].sort((a, b) => (a.key < b.key ? -1 : 1)) : null;\n"
+  "const hashKey = str => { let h = 2166136261; for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619) >>> 0; return h; };\n"
+  "const mixSeed = n => { n = Math.imul(n ^ (n >>> 16), 0x45d9f3b); n = Math.imul(n ^ (n >>> 16), 0x45d9f3b); return 1 + ((n ^ (n >>> 16)) >>> 0) % 2147483645; };\n"
+  "const siteSeed = i => mixSeed(hashKey(PIPES_W[i].key));\n"
+  "if (WL) YSK.splice(0, YSK.length, ...PIPES_W.map(p => [p.label, p.usd, p.st]));\n"
   "// the pipeline whose site the camera flies down to: the one worldOf ranks first (FOCUS_T = its kind)\n"
   "if (WL && !WL.region.pipelines.length) throw new Error('world data: the open board has no pipelines');\n"
-  "const PORT_I = WL ? 0 : YSK.findIndex(r => r[0] === 'note-actions r1');\n"
-  "const PORT_P = WL ? WL.region.pipelines[PORT_I] : null;\n"
+  "const PORT_I = WL ? Math.max(0, PIPES_W.findIndex(p => p.key === (WL.focus || WL.region.pipelines[0].key))) : YSK.findIndex(r => r[0] === 'note-actions r1');\n"
+  "const PORT_P = WL ? PIPES_W[PORT_I] : null;\n"
   "const FOCUS_T = WL ? PORT_P.place : 'harbor';\n"
   "const SITE_HINT = { harbor: 'Each <b>berth is a task</b> · cranes and trucks are the agents · click one for its log', village: 'Each <b>workshop is a task</b> · workers and carts are the agents · click one for its log', farm: 'Each <b>field is a task</b> · tractors are the agents · click one for its log' };\n"
   "const placeType = usd =>")
-R("const LIST = kind === 'mixed' ? YSK.map(", "const LIST = kind === 'mixed' && WL ? WL.region.pipelines.map(p => [p.label, p.st, p.chip]) : kind === 'mixed' ? YSK.map(")
+R("const LIST = kind === 'mixed' ? YSK.map(", "const LIST = kind === 'mixed' && WL ? PIPES_W.map(p => [p.label, p.st, p.chip]) : kind === 'mixed' ? YSK.map(")
 R("chrome(kind === 'mixed' ? { tab: 'You Should Know · 1 needs you',",
   "chrome(kind === 'mixed' && WL ? { ...WL.region.chrome, tabCol: TONE[WL.region.chrome.tabTone], hint } : kind === 'mixed' ? { tab: 'You Should Know · 1 needs you',")
 
@@ -63,15 +69,15 @@ R("const i = YSK.findIndex(r => r[0] === 'note-actions r1'), s = S[i],", "const 
 RP("items.push({ name: 'build', st: 'done', chip: 'done · builder', at: tp(m, [0, 17, 0]) }); }",
   "for (const u of WL ? [] : [{ short: 'build', st: 'done' }]) items.push({ name: u.short, st: u.st, chip: `${WORD[u.st]} · builder`, at: tp(m, [0, 17, 0]) }); }")
 RP("const REV = [['security', 'done', -105], ['ux', 'work', -35], ['ui', 'work', 35], ['code', 'done', 105]];",
-  "const BERTH = WL ? Math.min(70, 210 / Math.max(1, PORT_P.units.length - 1)) : 70;\n  const REV = WL ? PORT_P.units.map((u, k, a) => [u.label, u.st, (k - (a.length - 1) / 2) * BERTH, u.role]) : [['security', 'done', -105], ['ux', 'work', -35], ['ui', 'work', 35], ['code', 'done', 105]];\n"
+  "const BERTH = WL ? Math.min(70, 210 / Math.max(1, PORT_P.units.length - 1)) : 70;\n  const REV = WL ? PORT_P.units.map((u, k, a) => [u.label, u.st, (k - (a.length - 1) / 2) * BERTH, u.role, u.id]) : [['security', 'done', -105], ['ux', 'work', -35], ['ui', 'work', 35], ['code', 'done', 105]];\n"
   "  const IDLE = !!WL && !PORT_P.counts.work;")
 RP("ship(fr(x, -.4, -18, 0), 62, 13,", "ship(fr(x, -.4, -18, 0), WL ? Math.min(62, BERTH * .88) : 62, 13,")
-RP("for (const [n, st, x] of REV) {", "for (const [n, st, x, role = 'review'] of REV) {")
-RP("items.push({ name: n, st, chip: `${WORD[st]} · review`, at }); }", "items.push({ name: n, st, chip: `${WORD[st]} · ${role}`, at }); }")
+RP("for (const [n, st, x] of REV) {", "for (const [n, st, x, role = 'review', id] of REV) {")
+RP("items.push({ name: n, st, chip: `${WORD[st]} · review`, at }); }", "items.push({ name: n, st, chip: `${WORD[st]} · ${role}`, at, id }); }")
 RP("const g = capture(() => truck(0, 0, 0, cg)); ANIM.movers.push(t => { const c = (t / 11 + ph) % 1,",
   "const g = capture(() => truck(0, 0, 0, IDLE ? INK : cg)); ANIM.movers.push(t => { const c = IDLE ? 0 : (t / 11 + ph) % 1,")
 RP("items.push({ name: 'gate', st: 'wait', chip: 'waiting · all 4 reviews', at: [0, 9, -180] }); }",
-  "for (const u of WL ? (PORT_P.gate ? [PORT_P.gate] : []) : [{ label: 'gate', st: 'wait', chip: 'waiting · all 4 reviews' }]) items.push({ name: u.label, st: u.st, chip: u.chip || `${WORD[u.st]} · gate`, at: [0, 9, -180] }); }")
+  "for (const u of WL ? (PORT_P.gate ? [PORT_P.gate] : []) : [{ label: 'gate', st: 'wait', chip: 'waiting · all 4 reviews' }]) items.push({ name: u.label, st: u.st, chip: u.chip || `${WORD[u.st]} · gate`, at: [0, 9, -180], id: u.id }); }")
 
 # HUD: planet, click and port from the data
 RIN('runWorld', "chrome({ tab: 'All boards · 3 need you', tabCol: '#ec6a84', ticks: { label: '4/7 boards clear', list: BOARDS.map(b => b.st) }, tl: [['Boards', '7'], ['Tasks', '137'], ['Spent', '$218.66']], tr: [['Working', '02'], ['Needs you', '03'], ['Done', '129']], hint: 'Each <b>light is a board</b> · click one to fly down to it' });\n  SNAP.planet",
@@ -110,11 +116,11 @@ function buildVillageW() {
     solid(BOX(4, .9, 1.4), { m, pos: [-1, .45, 6], color: c });
     FEAT = 1; if (work) { sparks(tp(m, [-1, 1.4, 6]), 40, 1.6); const w1 = tp(m, [-1, 0, 7.6]), w2 = tp(m, [1.8, 0, 6.6]); worker(w1[0], w1[2], 0, GOLD, 'work'); worker(w2[0], w2[2], 2, GOLD, 'work'); smoke(tp(m, [3.6, 9, 1]), 18, INK, 200, .4); crate(m, [2.8, .9, 6], [1.3, 1, 1], GOLD); }
     else crate(m, [2.5, 0, 6.5], [1.6, 1.2, 1.3], u.st === 'fail' ? c : INK);
-    items.push({ name: u.label, st: u.st, chip: `${WORD[u.st]} · ${u.role}`, at: tp(m, [0, 10, 0]) });
+    items.push({ name: u.label, st: u.st, chip: `${WORD[u.st]} · ${u.role}`, at: tp(m, [0, 10, 0]), id: u.id });
   });
   FEAT = 3; { const z = -66; for (const [a, b] of [[-130, -9], [9, 130]]) solid(BOX(b - a, 6, 2.6), { pos: [(a + b) / 2, 3, z], op: .85 });
     for (const k of [-1, 1]) { solid(BOX(7, 14, 7), { pos: [k * 9.5, 7, z], color: LAB }); solid(new THREE.ConeGeometry(5.6, 6, 4), { pos: [k * 9.5, 17, z], rot: [0, Math.PI / 4, 0], color: LAB }); }
-    solid(BOX(12, 4, 4), { pos: [0, 9, z], color: LAB }); if (G) items.push({ name: G.label, st: G.st, chip: `${WORD[G.st]} · gate`, at: [0, 13, z] }); }
+    solid(BOX(12, 4, 4), { pos: [0, 9, z], color: LAB }); if (G) items.push({ name: G.label, st: G.st, chip: `${WORD[G.st]} · gate`, at: [0, 13, z], id: G.id }); }
   { const m = house(-44, 46, 0, { w: 22, d: 11, h: 7, rh: 5, chim: true, op: 1 }); for (let k = 0; k < 3; k++) crate(m, [6 + k * 2.2, 0, 7.5], [1.8, 1.4, 1.4], INK); }
   FEAT = 1; if (U.some(u => u.st === 'work')) for (const ph of [0, .5]) { const g = capture(() => { cart(0, 0, 0, GOLD, 1.3); worker(1.6, 2.2, 0); }); ANIM.movers.push(t => { const c = (t / 14 + ph) % 1, q = c < .5 ? sm(0, .45, c) : 1 - sm(.5, .95, c); g.position.set(lerp(-100, 100, ph ? 1 - q : q), 0, ph ? -14 : -18); g.rotation.y = (c < .5) === !ph ? 0 : Math.PI; }); }
   FEAT = 2; let nh = 0; for (let i = 0; i < 900 && nh < 44; i++) { const x = R(-140, 140), z = R(26, 130); if (Math.hypot(x, z - 50) > 110 || obsHit(x, z, 5)) continue; house(x, z, (rnd() < .5 ? 0 : Math.PI / 2) + R(-.15, .15), { w: R(6, 10), d: R(5, 7), h: R(3.5, 5.5), rh: R(2.4, 3.4), op: .78, chim: rnd() < .4 }); nh++; }
@@ -131,15 +137,47 @@ function buildFarmW() {
     FEAT = 2; field(x, z, 0, w, d, c, work ? .6 : .38, work ? .55 : 1, INK);
     FEAT = 1; if (!work) for (let i = 0; i < 8; i++) solid(CYL(.85, .85, 1.5, 12), { pos: [x - 21 + (i % 4) * 14 + R(-2, 2), .9, z - 8 + Math.floor(i / 4) * 16 + R(-2, 2)], rot: [Math.PI / 2, R(0, 3), 0], op: .9, color: u.st === 'fail' ? c : INK });
     else { const tx = x - w / 2 + w * .55 + 2; tractor(tx, z, Math.PI / 2, GOLD, 1.5); smoke([tx + 1.8, 6, z], 8, INK, 80, .35); const dust = dots(GOLD, 1.6, .6); for (let i = 0; i < 120; i++) dust.push(tx - R(3, 8), R(0, 2.5), z + R(-8, 8)); }
-    items.push({ name: u.label, st: u.st, chip: `${WORD[u.st]} · ${u.role}`, at: [x, 3, z] });
+    items.push({ name: u.label, st: u.st, chip: `${WORD[u.st]} · ${u.role}`, at: [x, 3, z], id: u.id });
   });
   FEAT = 1; for (let r = 0; r < rows - 1; r++) for (let x = -104; x <= 104; x += 5) if (Math.abs(x) > 5) tree(x + R(-1, 1), r * 46 + 23 + R(-1, 1), R(1.1, 1.5), 'd', .7);
   FEAT = 3; { const m = house(-60, zb, 0, { w: 22, d: 13, h: 7, rh: 6, op: 1 }); pl(m, [[-4, 0, 6.52], [-4, 6, 6.52], [4, 6, 6.52], [4, 0, 6.52]], INK, .9); house(-88, zb + 6, .1, { w: 10, d: 7, h: 4.5, rh: 3, chim: true, op: .9 }); }
   { const x0 = 44; solid(BOX(8, 34, 8), { pos: [x0, 17, zb], color: LAB }); solid(BOX(10, 5, 10), { pos: [x0, 36.5, zb], color: LAB }); solid(prism(10.5, 2.5, 10.5), { pos: [x0, 39, zb], color: LAB });
     for (const k of [-1, 1]) { const sx = x0 + k * 11; solid(CYL(4, 4, 22, 16), { pos: [sx, 11, zb + 2], color: LAB }); solid(new THREE.ConeGeometry(4.2, 3, 16), { pos: [sx, 23.5, zb + 2], color: LAB }); seg(null, [x0, 34, zb], [sx, 24.5, zb + 2], LAB, .8); obsAdd(sx, zb + 2, 6); }
-    obsAdd(x0, zb, 8); if (G) items.push({ name: G.label, st: G.st, chip: `${WORD[G.st]} · gate`, at: [x0, 40, zb] }); }
+    obsAdd(x0, zb, 8); if (G) items.push({ name: G.label, st: G.st, chip: `${WORD[G.st]} · gate`, at: [x0, 40, zb], id: G.id }); }
   FEAT = 2; let nt = 0; for (let i = 0; i < 4000 && nt < 160; i++) { const x = R(-150, 150), z = R(-100, 150); if (Math.abs(x) < 112 && z > -40 && z < zb + 16) continue; if (obsHit(x, z, 3) || fbm(x / 40, z / 40, 3, 71) < .45) continue; tree(x, z, R(1.8, 2.6), rnd() < .6 ? 'd' : 'c', .7); nt++; }
   return items;
 }
 function portR(s, st) {''')
+
+# stable settlements: kept spots, a seed per settlement and per scatter step, so a rebuild after a state change differs
+# only where something changed (the plugin swaps the rebuilt world in at the same camera)
+R("function regionHF(kind) {\n  let S;\n  if (kind === 'mixed') S = autoSites();", """// Real data: a settlement keeps the spot it had (WL.keepSites by pipeline key; a port stays on the coast), a new one takes
+// the free spot farthest from the rest, and each draws its random numbers from its own key. SITE_SPOTS is what to keep.
+let SITE_SPOTS = null;
+function autoSitesW() {
+  const types = YSK.map(([, usd]) => placeType(usd)), S = [], KEEP = WL.keepSites || {};
+  const inFrame = (x, z) => { const p = proj([x, Math.max(0, land(x, z)), z]); return p[0] > W * .12 && p[0] < W * .84 && p[1] > H * .2 && p[1] < H * .84; };
+  const gap = (x, z, r) => S.length ? Math.min(...S.map(s => Math.hypot(s.x - x, s.z - z) - (s.foot || s.r) - r)) : 1e9;
+  const mk = (x, z, i, t) => t === 'harbor' ? { x, z, r: 40, coast: true, lv: 2.2, i, t } : { x, z, r: t === 'farm' ? 62 : 32, foot: t === 'farm' ? 54 : 40, i, t };
+  const none = i => { throw new Error('world: no free spot for ' + PIPES_W[i].key); };
+  types.forEach((t, i) => { const k = KEEP[PIPES_W[i].key]; if (Array.isArray(k) && (k[2] === 'harbor') === (t === 'harbor')) S.push(mk(k[0], k[1], i, t)); });
+  const kept = new Set(S.map(s => s.i));
+  types.forEach((t, i) => { if (kept.has(i) || t !== 'harbor') return; let best = null; for (let z = -320; z <= 320; z += 10) { const x = coastX(z) - 16; if (Math.abs(z - 118) < 60 || !inFrame(x + 20, z)) continue; const d = gap(x, z, 40); if (!best || d > best.d) best = { x, z, d }; } if (!best) none(i); S.push(mk(best.x, best.z, i, t)); });
+  types.forEach((t, i) => { if (kept.has(i) || t === 'harbor') return; seed = siteSeed(i); const r = t === 'farm' ? 54 : 40; let best = null; for (let k = 0; k < 3000; k++) { const x = R(-460, 240), z = t === 'farm' ? R(-20, 330) : R(-420, 330), h = land(x, z); if (h < 4 || h > 45) continue; if (Math.abs(land(x + 14, z) - land(x - 14, z)) + Math.abs(land(x, z + 14) - land(x, z - 14)) > 9) continue; if (dPoly(x, z, RIV) < r + 40 || coastX(z) - x < r + 60 || !inFrame(x, z)) continue; const d = gap(x, z, r); if (!best || d > best.d) best = { x, z, d }; } if (!best) none(i); S.push(mk(best.x, best.z, i, t)); });
+  SITE_SPOTS = Object.fromEntries(S.map(q => [PIPES_W[q.i].key, [q.x, q.z, q.t]]));
+  window.__siteSpots = SITE_SPOTS;
+  return S.sort((a, b) => a.i - b.i);
+}
+function regionHF(kind) {
+  let S;
+  if (kind === 'mixed') { S = WL ? autoSitesW() : autoSites(); if (WL) seed = 17; }""")
+RIN('buildRegion', "const items = S.map((s, i) => { const [name, st, chip] = LIST[i]; const at =", "const items = S.map((s, i) => { const [name, st, chip] = LIST[i]; if (WL) seed = siteSeed(i); const at =")
+RIN('buildRegion', "farmR(s, st); return { name, st, chip, at }; });", "farmR(s, st); return { name, st, chip, at, id: WL ? PIPES_W[i].key : undefined }; });")
+RIN('buildRegion', "for (let i = 0; i < (WORLD ? 900 : kind === 'farm' ? 320 : 240); i++) { const x =", "for (let i = 0; i < (WORLD ? 900 : kind === 'farm' ? 320 : 240); i++) { if (WL) seed = mixSeed(i + 1); const x =")
+RIN('buildRegion', "for (let i = 0; i < (WORLD ? 420000 : 110000) && nt < (WORLD ? 24000 : 6500); i++) { const x =", "for (let i = 0; i < (WORLD ? 420000 : 110000) && nt < (WORLD ? 24000 : 6500); i++) { if (WL) seed = mixSeed(i + 5e6); const x =")
+RIN('buildRegion', "for (const [a, b] of E) { const A = S[a], B = S[b],", "for (const [a, b] of E) { if (WL) seed = mixSeed(hashKey(PIPES_W[a].key + '|' + PIPES_W[b].key)); const A = S[a], B = S[b],")
+RIN('runWorld', "S.forEach((s, i) => { const st = WORLD.items[i].st, dI", "S.forEach((s, i) => { if (WL) seed = siteSeed(i); const st = WORLD.items[i].st, dI")
+# clickable labels: the board slug, pipeline key or task id rides on the label
+RIN('placeLabels', '<div class="tg ${best.right ? \'r\' : \'\'}" style=', '<div class="tg ${best.right ? \'r\' : \'\'}"${q.id ? ` data-id="${esc(q.id)}"` : \'\'} style=')
+RIN('columnLabels', '<div class="tg ${side === \'r\' ? \'r\' : \'\'}" style=', '<div class="tg ${side === \'r\' ? \'r\' : \'\'}"${q.id ? ` data-id="${esc(q.id)}"` : \'\'} style=')
 open(p, 'w', encoding='utf-8', newline='\n').write(s); print('data patched', len(s))

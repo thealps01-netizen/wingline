@@ -28,6 +28,12 @@ stretches.
   a port (a berth per task), a village (a workshop per task on the main street) or a farm (a field
   per task). Without `data=` the page is the snapshot, pixel
   for pixel (10 canvas hashes, `canvas-eq.cjs`).
+- **Stable rebuilds:** settlements are laid out in pipeline-key order, each draws its random numbers
+  from its own key, and the file may carry `keepSites` (the spots of the last build, which the page
+  leaves in `window.__siteSpots`) and `focus` (the pipeline key to fly down to). A rebuild after one
+  task changed state then differs only at that settlement, the HUD numbers and the labels that
+  make room (Sap Systems, one task done → running: 1,751 of 1,062,000 region pixels, 0 at the site).
+  Labels carry `data-id` (board slug, pipeline key or task id) for clicks.
 - **Not done yet:** a board with no pipelines stops with a note; real clicks, live updates and the
   agent stream. That is the plugin integration step.
 
