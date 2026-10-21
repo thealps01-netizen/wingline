@@ -24,10 +24,12 @@ stretches.
   snapshot. The file is the plugin's own converter output (`worldOf` in `desktop/plugin.js`),
   made with `node world-data.mjs <overview.json> data-<name>.json [board slug]` (needs
   `cd ../../tests && npm ci` once; `data-*.json` is not tracked). The open board is the region;
-  the camera flies to its first port pipeline. Without `data=` the page is the snapshot, pixel
+  the camera flies on down to the pipeline `worldOf` ranks first and builds it in its own kind:
+  a port (a berth per task), a village (a workshop per task on the main street) or a farm (a field
+  per task). Without `data=` the page is the snapshot, pixel
   for pixel (10 canvas hashes, `canvas-eq.cjs`).
-- **Not done yet:** village and farm sites inside the world (a board without a port pipeline stops
-  with a note), real clicks, live updates and the agent stream. That is the plugin integration step.
+- **Not done yet:** a board with no pipelines stops with a note; real clicks, live updates and the
+  agent stream. That is the plugin integration step.
 
 ## Files
 
