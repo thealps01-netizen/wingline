@@ -24,5 +24,5 @@ Expected: `selftest: N checks passed`, `static audit: clean`, `all checks passed
   `render_check.mjs` asserts this.
 - `desktop/plugin.js` and `dashboard/plugin_api.py` carry no comments; the reasoning lives in
   `Docs/wingline-notes.md`.
-- Fixtures carry no account names: regenerate `tests/fixtures/overview-real.json` with
+- Fixtures carry no account names: regenerate `tests/fixtures/app-real.json` with
   `tests/make_fixture.py`, which scrubs home paths. The audit fails on a leaked path.

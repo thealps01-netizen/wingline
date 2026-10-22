@@ -1,25 +1,31 @@
 # Wingline
 
-A Hermes Desktop page for people who run Hermes Kanban boards. It shows what needs you first,
-what is running now, what is queued and done, and what each task cost. You can look at the same
-data two ways:
+A Hermes Desktop page for people who run Hermes Kanban boards. Every card says in a plain sentence
+what happened, why, and what you can do about it; the agent's own words stay one click away, under
+"Technical details".
 
-- **Board**: the "Needs you" strip, work in progress, a pipeline map (parents → children) and a
-  timeline. The timeline shortens idle gaps but draws working time at its true length.
-- **Factory**: a production line where tasks move as packages between machines (build → review →
-  gate → shipped). A stopped task jams its machine and drops into a red "Needs you" bin. You can
-  watch it live or replay the board's history at 1×, 4× or 16×.
+- **Board**: four columns — Needs you, Working, Queued, Done — for the board picked in the sidebar.
+  Finished pipelines fold into one card with a one-line result ("Merged into the main code in
+  round 3", "Sent back: visual found a problem → round 2"). Hover a card to see what it waits for.
+- **List**: the same tasks grouped by pipeline, one row each.
+- **Inbox**: every decision waiting for you across all boards, plus what shipped since you looked.
+- **Drawer**: click a card for its story (headline, why, what follows), a timeline of what Hermes
+  recorded, and for review pipelines **The loop** — Build → four checks → your approval, one row per
+  round, with the reason each round went back.
+- **Replay** (R): play the board's history at 10 min/s, 30 min/s or 2 h/s. **Command palette** (/)
+  and keyboard shortcuts (?).
 
 Hermes core is never edited. Wingline reads Kanban and session data read-only. Every change goes
-through Hermes' own Kanban API, and each one waits for a confirmation that states exactly what will
-change:
+through Hermes' own Kanban API:
 
-| Action | What happens |
+| Button | What happens |
 |---|---|
-| Retry with more time | Hermes cannot change an existing task's time limit, so Wingline creates a new task with the same settings and the new limit, re-links its children, leaves a comment on the old task and archives it |
-| Add note | Adds a comment to the task |
-| Archive | Archives the task (two-step) |
-| Open log / Open in Kanban / Ask in chat | Read-only |
+| Run again (optional note) | The note becomes a Kanban comment signed `wingline`, then Hermes sets the task `ready` |
+| Reply (agent asked a question) | Your answer becomes a comment, then the task is set `ready` |
+| Tell the agent (running task) | Adds a comment; Hermes hands new comments to the worker at its next step |
+| Check (running task) | Sends nothing; answers from the record (last sign of life, usual duration) |
+| Run with more time (out of time) | Hermes cannot change a task's time limit, so a new task with the same settings and the new limit is created, children are re-linked, the old task gets a comment and is archived — every step listed first |
+| Remove | Two clicks, then 8 seconds to Undo before anything is sent; then the task is archived |
 
 ## Cost
 
@@ -31,7 +37,8 @@ a price.
 ## Install
 
 Hermes Desktop: **Capabilities → Plugins**, install `thealps01-netizen/wingline`, then **Rescan**.
-CLI equivalent: `hermes plugins install thealps01-netizen/wingline --enable`.
+CLI equivalent: `hermes plugins install thealps01-netizen/wingline --enable`. The backend route
+changed in 0.2.0, so restart the app once after updating.
 
 Requires Hermes 0.22.2 or later (the version it is tested against).
 

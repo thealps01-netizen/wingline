@@ -34,13 +34,24 @@ JS = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "desktop" / "p
 ACCOUNT = re.compile("ene" + "sa", re.I)
 USER_PATH = re.compile(r"[A-Za-z]:(?:[/\\]|\\\\)+Users(?:[/\\]|\\\\)+([A-Za-z0-9._-]+)", re.I)
 FIXTURE_USERS = {"someone"}
+CAUSES = {"usage_limit", "silent", "time_limit", "missing_skill", "error", "asks_you", "review"}
 TEMPLATES = {
-    "wingline.status": {"blocked", "running", "todo", "ready", "triage", "scheduled", "review", "done", "archived", "other"},
-    "wingline.role": {"builder", "review", "gate", "detective"},
-    "wingline.run": {"ok", "stopped", "paused", "running"},
-    "wingline.cost": {"estimated", "actual", "mixed", "none"},
-    "wingline.count": {"needs", "working", "queued", "done"},
-    "wingline.view": {"board", "factory"},
+    "wingline.col": {"needs", "working", "queued", "done"},
+    "wingline.pill": {"needs", "working", "queued", "done", "absent", "gone"},
+    "wingline.view": {"board", "list", "inbox"},
+    "wingline.lens": {"build", "security", "ux", "ui", "code", "gate", "flake"},
+    "wingline.lensShort": {"build", "security", "ux", "ui", "code", "gate", "flake"},
+    "wingline.labelKind": {"review", "continued"},
+    "wingline.badge": CAUSES,
+    "wingline.head": CAUSES,
+    "wingline.why": CAUSES,
+    "wingline.note": {"again", "reply", "tell"},
+    "wingline.out": {"completed", "crashed", "timed_out", "blocked", "rate_limited", "gave_up", "reclaimed", "running", "other"},
+    "wingline.replay": {"range24", "range3", "range7", "rangeAll", "s10", "s30", "s2h"},
+    "wingline.keys": {"search", "filter", "move", "open", "close", "again", "undo", "views", "replay", "play", "rail", "help"},
+    "wingline.tl": {"createdYou", "createdTask", "waitFor", "ready", "started", "restarted", "rateLimited", "quiet", "crashLimit",
+                    "crashSkill", "crashDied", "crashError", "timedOut", "gaveUp", "asked", "noteYou", "noteAgent", "unblocked",
+                    "finished", "removed", "lastLife", "limitRan"},
     "wingline.dlg.state": {"pending", "running", "done", "failed"},
 }
 problems: list[str] = []

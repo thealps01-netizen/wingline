@@ -23,7 +23,7 @@ app.whenReady().then(async () => {
   const problems = []
   if (!pages.length) problems.push('no preview pages: run node preview.mjs first')
   for (const name of pages) {
-    const win = new BrowserWindow({ width: WIDTH, height: HEIGHT, useContentSize: true, show: false, backgroundColor: '#0d0d0e' })
+    const win = new BrowserWindow({ width: WIDTH, height: HEIGHT, useContentSize: true, show: true, x: -3000, y: 0, frame: false, skipTaskbar: true, backgroundColor: '#0d0d0e', webPreferences: { backgroundThrottling: false } })
     win.webContents.on('console-message', e => {
       if (e.level === 'error') problems.push(`${name}: ${e.message}`)
     })
@@ -37,7 +37,9 @@ app.whenReady().then(async () => {
       win.destroy()
       continue
     }
-    await new Promise(r => setTimeout(r, 900))
+    const until = Date.now() + 8000
+    while (Date.now() < until && !(await win.webContents.executeJavaScript('window.__ready === true'))) await new Promise(r => setTimeout(r, 100))
+    await new Promise(r => setTimeout(r, 300))
     const wide = await win.webContents.executeJavaScript('document.documentElement.scrollWidth - document.documentElement.clientWidth')
     if (wide > 0) problems.push(`${name}: the page scrolls sideways by ${wide}px`)
     const image = await win.webContents.capturePage({ x: 0, y: 0, width: WIDTH, height: HEIGHT })

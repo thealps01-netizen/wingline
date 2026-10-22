@@ -1,10 +1,10 @@
 name: wingline
 label: Wingline
-version: 0.1.0
+version: 0.2.0
 description: >-
   Wingline — a human-side view of Hermes Kanban boards: what needs you, what is running, what is
-  queued and done, and what each task cost. Two views of the same data (Board and Factory) and a
-  small set of actions that go through Hermes' own Kanban API. Reads Hermes data read-only.
+  queued and done, and what each task cost, each in a plain sentence. Board, List and Inbox views and
+  a small set of actions that go through Hermes' own Kanban API. Reads Hermes data read-only.
 author: Muhammed Enes Alpler
 license: MIT
 requires_hermes: ">=0.22.2"

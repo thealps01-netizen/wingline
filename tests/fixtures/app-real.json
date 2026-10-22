@@ -1,0 +1,2051 @@
+{
+ "now": 1792695338.4612384,
+ "boards": [
+  {
+   "slug": "hermes-approvals-ui",
+   "name": "Hermes Approvals Ui",
+   "last": 1792610504
+  }
+ ],
+ "tasks": [
+  {
+   "id": "t_242d9908",
+   "board": "hermes-approvals-ui",
+   "title": "ui-polish-1140 r1 build",
+   "pipe": "ui-polish-1140 r1",
+   "step": "build",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792315364,
+   "done": 1792317033,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [],
+   "children": [
+    "t_94f22975",
+    "t_cf7ad7af",
+    "t_891f0ddb",
+    "t_d58656b8"
+   ],
+   "runs": [
+    {
+     "s": 1792315403,
+     "e": 1792317033,
+     "o": "completed",
+     "sum": "STATUS: READY. factory/ui-polish-1140 (0770357, d89b0ca on top of the AGENTS.md commit) ships four UI fixes: one warning per reason (notify id), the Unverified explanation inline, focus returning to the History row after Undo/Restore, and plain-English History summaries. All gates pass (audit, 62-rule canary, contract, selftest, 52/52 regress, render, preview, shot dark/light). The 4 new render checks fail on ui/1.14…",
+     "err": ""
+    }
+   ],
+   "usd": 6.13,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "factory/ui-polish-1140 (0770357, d89b0ca on top of the AGENTS.md commit) ships four UI fixes: one warning per reason (notify id), the Unverified explanation inline, focus",
+   "lens": "build",
+   "label": "build",
+   "labelKind": null,
+   "idx": 1,
+   "of": 6
+  },
+  {
+   "id": "t_94f22975",
+   "board": "hermes-approvals-ui",
+   "title": "ui-polish-1140 r1 security",
+   "pipe": "ui-polish-1140 r1",
+   "step": "security",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792315368,
+   "done": 1792317115,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_242d9908"
+   ],
+   "children": [
+    "t_834367bc"
+   ],
+   "runs": [
+    {
+     "s": 1792317041,
+     "e": 1792317115,
+     "o": "completed",
+     "sum": "VERDICT: PASS — panel-only change: text is rendered escaped through jsx, entry ids never go into a selector, the gist regexes are linear (300k-character probe ran in 11 ms or less), and nothing new is exposed, no dependency was added and no secret is in the diff.",
+     "err": ""
+    }
+   ],
+   "usd": 0.56,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — panel-only change: text is rendered escaped through jsx, entry ids never go into a selector, the gist regexes are linear (300k-character probe ran in 11 ms or less",
+   "lens": "security",
+   "label": "security",
+   "labelKind": null,
+   "idx": 2,
+   "of": 6
+  },
+  {
+   "id": "t_cf7ad7af",
+   "board": "hermes-approvals-ui",
+   "title": "ui-polish-1140 r1 ux",
+   "pipe": "ui-polish-1140 r1",
+   "step": "ux",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792315372,
+   "done": 1792317118,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_242d9908"
+   ],
+   "children": [
+    "t_834367bc"
+   ],
+   "runs": [
+    {
+     "s": 1792317041,
+     "e": 1792317118,
+     "o": "completed",
+     "sum": "VERDICT: PASS — warnings, Unverified explanation, History focus and plain summaries all meet the UX requirements with no dead ends, accessible keyboard/SR paths, and plain copy.",
+     "err": ""
+    }
+   ],
+   "usd": 0.39,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — warnings, Unverified explanation, History focus and plain summaries all meet the UX requirements with no dead ends, accessible keyboard/SR paths, and plain copy.",
+   "lens": "ux",
+   "label": "ux",
+   "labelKind": null,
+   "idx": 3,
+   "of": 6
+  },
+  {
+   "id": "t_891f0ddb",
+   "board": "hermes-approvals-ui",
+   "title": "ui-polish-1140 r1 ui",
+   "pipe": "ui-polish-1140 r1",
+   "step": "ui",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792315376,
+   "done": 1792317114,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_242d9908"
+   ],
+   "children": [
+    "t_834367bc"
+   ],
+   "runs": [
+    {
+     "s": 1792317041,
+     "e": 1792317114,
+     "o": "completed",
+     "sum": "VERDICT: PASS — the four UI changes (inline Unverified explanation, plain-prose History summaries) match the theme and kit conventions, no overflow/contrast issues in dark or light shots, no visual regression.",
+     "err": ""
+    }
+   ],
+   "usd": 0.43,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — the four UI changes (inline Unverified explanation, plain-prose History summaries) match the theme and kit conventions, no overflow/contrast issues in dark or ligh",
+   "lens": "ui",
+   "label": "ui",
+   "labelKind": null,
+   "idx": 4,
+   "of": 6
+  },
+  {
+   "id": "t_d58656b8",
+   "board": "hermes-approvals-ui",
+   "title": "ui-polish-1140 r1 code",
+   "pipe": "ui-polish-1140 r1",
+   "step": "code",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792315379,
+   "done": 1792317594,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_242d9908"
+   ],
+   "children": [
+    "t_834367bc"
+   ],
+   "runs": [
+    {
+     "s": 1792317041,
+     "e": 1792317594,
+     "o": "completed",
+     "sum": "VERDICT: PASS — all 7 AGENTS.md validation commands plus the base-plugin AC2 check and the grep/diff acceptance checks re-run independently and match build.md; diff reviewed for correctness, simplicity, style and doc accuracy with no blocking findings.",
+     "err": ""
+    }
+   ],
+   "usd": 1.23,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — all 7 AGENTS.md validation commands plus the base-plugin AC2 check and the grep/diff acceptance checks re-run independently and match build.md;",
+   "lens": "code",
+   "label": "code",
+   "labelKind": null,
+   "idx": 5,
+   "of": 6
+  },
+  {
+   "id": "t_834367bc",
+   "board": "hermes-approvals-ui",
+   "title": "ui-polish-1140 r1 gate",
+   "pipe": "ui-polish-1140 r1",
+   "step": "gate",
+   "role": "gate",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792315383,
+   "done": 1792347029,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_94f22975",
+    "t_cf7ad7af",
+    "t_891f0ddb",
+    "t_d58656b8"
+   ],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792317648,
+     "e": 1792317835,
+     "o": "blocked",
+     "sum": "merge-ready: round 1 all PASS, every AC met, no merge conflict — check the before/after shots in .factory/ui-polish-1140/shots/ and say yes to merge factory/ui-polish-1140 into ui/1.14.0.",
+     "err": ""
+    },
+    {
+     "s": 1792347029,
+     "e": 1792347029,
+     "o": "completed",
+     "sum": "Merged into ui/1.14.0 at 27be5fc with the owner's approval (PR #22, unreleased).",
+     "err": ""
+    }
+   ],
+   "usd": 0.63,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 1,
+   "outcome": "Merged into ui/1.14.0 at 27be5fc with the owner's approval (PR #22, unreleased).",
+   "lens": "gate",
+   "label": "gate",
+   "labelKind": null,
+   "idx": 6,
+   "of": 6
+  },
+  {
+   "id": "t_be1a1c5a",
+   "board": "hermes-approvals-ui",
+   "title": "deck T1: top bar figures and the Deck | List switch",
+   "pipe": "deck",
+   "step": "T1",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792350881,
+   "done": 1792352559,
+   "maxrt": 3600,
+   "retries": 1,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792350913,
+     "e": 1792352559,
+     "o": "completed",
+     "sum": "Status DONE. Commit a3ae824 \"deck: top bar figures and the Deck | List switch\" on design/deck (base 4419d0d). RED confirmed failing on base plugin.js, GREEN: all gates pass (audit=0 canary=0 contract=0 contract-canary=0 selftest=0 regress=0 render=0 preview=0, 52/52 regressions). Replaced the 4-box KPI grid with a Figures strip (Applied/Can be undone/MEMORY.md%/USER.md%) and added the Deck|List switch (persisted via …",
+     "err": ""
+    }
+   ],
+   "usd": 2.88,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "Commit a3ae824 \"deck: top bar figures and the Deck | List switch\" on design/deck (base 4419d0d).",
+   "lens": null,
+   "label": "Top bar figures and the Deck | List switch",
+   "labelKind": null,
+   "idx": 1,
+   "of": 12
+  },
+  {
+   "id": "t_b738c76a",
+   "board": "hermes-approvals-ui",
+   "title": "deck T1 review",
+   "pipe": "deck",
+   "step": "T1 review",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792353369,
+   "done": 1792353627,
+   "maxrt": 1800,
+   "retries": 1,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792353404,
+     "e": 1792353627,
+     "o": "completed",
+     "sum": "Task 1 (deck top-bar figures + Deck|List switch) reviewed: Spec ✅, Approved. Independently re-ran render_check.mjs on HEAD (OK) and on base 4419d0d (RED matches report). All brief interfaces, bundle keys, kit-Button/aria-pressed/role=group switch, var(--ui-*)-only CSS, and AGENTS.md style rules verified in the diff. One Minor finding (base-plugin RED run truncates on a TypeError rather than reporting all later blocks…",
+     "err": ""
+    }
+   ],
+   "usd": 0.55,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "Task 1 (deck top-bar figures + Deck|List switch) reviewed: Spec ✅, Approved.",
+   "lens": null,
+   "label": "Top bar figures and the Deck | List switch",
+   "labelKind": "review",
+   "idx": 2,
+   "of": 12
+  },
+  {
+   "id": "t_46c8720c",
+   "board": "hermes-approvals-ui",
+   "title": "deck T2: one front card, its position, Later and All clear",
+   "pipe": "deck",
+   "step": "T2",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792353878,
+   "done": 1792356594,
+   "maxrt": 3600,
+   "retries": 1,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792353889,
+     "e": 1792354219,
+     "o": "blocked",
+     "sum": "Wiring DeckView into `view === 'pending'` by `layout` (default 'deck', unseeded in test STORE) breaks ~15-20 already-green render_check.mjs assertions that expect the full PendingList grid on a fresh mount (DeckView's DOM contract shows only one front `.pa-cell`). Fixing this means either seeding/forcing 'list' for the legacy test mounts (conflicts with Task 1's own \"Deck should start pressed\" check on the very first…",
+     "err": ""
+    },
+    {
+     "s": 1792355224,
+     "e": 1792356594,
+     "o": "completed",
+     "sum": "Status DONE. Commit 83d4109 \"deck: one front card, its position, Later and All clear\" on design/deck (base a3ae824). RED confirmed failing on base plugin.js; GREEN: audit=0 canary=0 contract=0 contract-canary=0 selftest=0 regress=0 render=0 preview=0 (52/52). Resolved controller's layout-seeding decision in mount() (default list / {layout:null} / {layout:'deck'} / {layout:'keep'}), re-pointed Task 1's \"Deck should st…",
+     "err": ""
+    }
+   ],
+   "usd": 3.79,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 2,
+   "outcome": "Commit 83d4109 \"deck: one front card, its position, Later and All clear\" on design/deck (base a3ae824).",
+   "lens": null,
+   "label": "One front card, its position, Later and All clear",
+   "labelKind": null,
+   "idx": 3,
+   "of": 12
+  },
+  {
+   "id": "t_5a5efd8d",
+   "board": "hermes-approvals-ui",
+   "title": "deck T2 review",
+   "pipe": "deck",
+   "step": "T2 review",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792357261,
+   "done": 1792357695,
+   "maxrt": 1800,
+   "retries": 1,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792357292,
+     "e": 1792357695,
+     "o": "completed",
+     "sum": "Task 2 reviewed. Spec ✅, Approved with one Critical follow-up. Independently re-ran the red-proof on base a3ae824 (guarded click()) confirming all 6 checks fail on base, but found deck_single's first two sub-assertions pass vacuously there (Important). Read-world check of DeckView's useLayoutEffect found it lacks the codebase's lost()-guard pattern used by refocus()/settle(), so it can steal focus from elsewhere when…",
+     "err": ""
+    }
+   ],
+   "usd": 0.95,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "Task 2 reviewed.",
+   "lens": null,
+   "label": "One front card, its position, Later and All clear",
+   "labelKind": "review",
+   "idx": 4,
+   "of": 12
+  },
+  {
+   "id": "t_5a39ad46",
+   "board": "hermes-approvals-ui",
+   "title": "deck T3: card face and round decision buttons",
+   "pipe": "deck",
+   "step": "T3",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792357783,
+   "done": 1792360720,
+   "maxrt": 4800,
+   "retries": 1,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792357839,
+     "e": 1792360720,
+     "o": "completed",
+     "sum": "Implemented task 3 of the approvals-deck-redesign plan in two commits: (1) fixed the deck's focus-stealing bug by gating refocus on lost()==true and made Later explicitly move focus by blurring itself, with a new red-proving deck_focus_not_stolen test; (2) built the deck card's face (.pa-face-type/title/text/was/verdict + \"Read in full\") and round decision dock (.pa-dock with reject/approve/later .pa-round frames, Ap…",
+     "err": ""
+    }
+   ],
+   "usd": 6.68,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "Implemented task 3 of the approvals-deck-redesign plan in two commits: (1) fixed the deck's focus-stealing bug by gating refocus on lost()==true and made Later explicitly",
+   "lens": null,
+   "label": "Card face and round decision buttons",
+   "labelKind": null,
+   "idx": 5,
+   "of": 12
+  },
+  {
+   "id": "t_ed968687",
+   "board": "hermes-approvals-ui",
+   "title": "deck T3 review",
+   "pipe": "deck",
+   "step": "T3 review",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792363242,
+   "done": 1792363520,
+   "maxrt": 1800,
+   "retries": 1,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792363243,
+     "e": 1792363520,
+     "o": "completed",
+     "sum": "Task 3 reviewed (commits 8dc6357+ede48b2). Spec ✅, Approved with 2 Important findings: deck_round_kit crashes render_check.mjs (null.querySelectorAll) on an old plugin.js — same \"must not crash\" follow-up from Task 2 is still open; \"Later blurs itself\" has no actual .blur() call, relying implicitly on key-remount unmounting the focused button (works, but fragile/undeclared — recommend explicit blur). Task 2's Critica…",
+     "err": ""
+    }
+   ],
+   "usd": 0.73,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "Task 3 reviewed (commits 8dc6357+ede48b2).",
+   "lens": null,
+   "label": "Card face and round decision buttons",
+   "labelKind": "review",
+   "idx": 6,
+   "of": 12
+  },
+  {
+   "id": "t_8b60342b",
+   "board": "hermes-approvals-ui",
+   "title": "deck T4: the card grows in place to read a record",
+   "pipe": "deck",
+   "step": "T4",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792389875,
+   "done": 1792416431,
+   "maxrt": 4800,
+   "retries": 1,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792389883,
+     "e": 1792400535,
+     "o": "crashed",
+     "sum": "",
+     "err": "pid 38160 not alive Worker's last output: \"al… 💻 $ bash <home>/AppData/Local/hermes/cache/scratch/pa-fix113/gates_deck.sh v0.22.0 140.5s ▌ Hermes All green except the known pre-existing flaky …"
+    },
+    {
+     "s": 1792416431,
+     "e": 1792416431,
+     "o": "completed",
+     "sum": "Task 4 done: the worker finished the work but was killed by the runtime limit before committing; the controller verified the gates and committed it as abcdc1c (plus 87ff728 from the same run). Reviewed in t_5ac89993: Spec ✅, Approved.",
+     "err": ""
+    }
+   ],
+   "usd": 5.41,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 1,
+   "outcome": "Task 4 done: the worker finished the work but was killed by the runtime limit before committing;",
+   "lens": null,
+   "label": "The card grows in place to read a record",
+   "labelKind": null,
+   "idx": 7,
+   "of": 12
+  },
+  {
+   "id": "t_31e245ac",
+   "board": "hermes-approvals-ui",
+   "title": "deck TV: the deck looks like the approved mockup",
+   "pipe": "deck",
+   "step": "TV",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792402092,
+   "done": 1792406692,
+   "maxrt": 5400,
+   "retries": 1,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792402093,
+     "e": 1792406692,
+     "o": "completed",
+     "sum": "Implemented Task V (approvals deck polish): circular Reject/Approve/Later round buttons with a real ≥44px hit target and visible labels, a tilted/shadowed deck stack, opaque card surfaces in both themes, an accent-barred card-face quote, a decorative \"All clear\" badge, and fixed toneText/contrast violations (figures + face type label) by moving tone colour off text onto dots. Added 5 new preview.mjs deck frames and n…",
+     "err": ""
+    }
+   ],
+   "usd": 7.1,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "Implemented Task V (approvals deck polish): circular Reject/Approve/Later round buttons with a real ≥44px hit target and visible labels, a tilted/shadowed deck stack, opa",
+   "lens": null,
+   "label": "The deck looks like the approved mockup",
+   "labelKind": null,
+   "idx": 8,
+   "of": 12
+  },
+  {
+   "id": "t_5ac89993",
+   "board": "hermes-approvals-ui",
+   "title": "deck T4 review",
+   "pipe": "deck",
+   "step": "T4 review",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792402105,
+   "done": 1792402369,
+   "maxrt": 1800,
+   "retries": 1,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792402153,
+     "e": 1792402369,
+     "o": "completed",
+     "sum": "Task 4 reviewed (commits 87ff728+abcdc1c, diff ede48b2..abcdc1c). Spec ✅, Approved. All Task 3 follow-ups closed, brief interfaces traced by hand (not just test-passing), red-run on 87ff728 confirmed non-vacuous, AGENTS.md rules check out via `git show` (never the live worktree). One minor test-coverage gap (dock consequence untested for delete/memory, but logic correct). No cannot-verify items.",
+     "err": ""
+    }
+   ],
+   "usd": 0.6,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "Task 4 reviewed (commits 87ff728+abcdc1c, diff ede48b2..abcdc1c).",
+   "lens": null,
+   "label": "The card grows in place to read a record",
+   "labelKind": "review",
+   "idx": 9,
+   "of": 12
+  },
+  {
+   "id": "t_588015a6",
+   "board": "hermes-approvals-ui",
+   "title": "deck TV2: glyphs, unclipped deck, large title, narrow header",
+   "pipe": "deck",
+   "step": "TV2",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792416841,
+   "done": 1792419969,
+   "maxrt": 5400,
+   "retries": 1,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792416901,
+     "e": 1792419969,
+     "o": "completed",
+     "sum": "Status DONE | commit 6a6ecbd \"deck: glyphs that read, a deck that is not clipped\" (all 4 gaps in one commit, not 4 separate — see report) | gates green (`v0.22.0 audit=0 canary=0 contract=0 contract-canary=0 selftest=0 regress=0 render=0 preview=0`), shot gate clean both themes, only pre-existing chip flake seen on reruns (not mine, matches base) | concerns: single commit instead of 4 (process deviation, functionally…",
+     "err": ""
+    }
+   ],
+   "usd": 5.56,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "commit 6a6ecbd \"deck: glyphs that read, a deck that is not clipped\" (all 4 gaps in one commit, not 4 separate — see report) | gates green (`v0.22.0 audit=0 canary=0 contr",
+   "lens": null,
+   "label": "Glyphs, unclipped deck, large title, narrow header",
+   "labelKind": null,
+   "idx": 10,
+   "of": 12
+  },
+  {
+   "id": "t_47d70ed9",
+   "board": "hermes-approvals-ui",
+   "title": "deck flake: root cause of the chip /reviews check",
+   "pipe": "deck",
+   "step": "flake",
+   "role": "detective",
+   "status": "archived",
+   "assignee": "default",
+   "created": 1792416844,
+   "done": null,
+   "maxrt": 5400,
+   "retries": 1,
+   "reason": "pid 7496 exited with code 1 Worker's last output: 'Initializing agent... Error: Unknown skill(s): superpowers:systematic-debugging'",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792416901,
+     "e": 1792416962,
+     "o": "crashed",
+     "sum": "",
+     "err": "pid 7496 exited with code 1 Worker's last output: 'Initializing agent... Error: Unknown skill(s): superpowers:systematic-debugging'"
+    }
+   ],
+   "usd": 0.0,
+   "usdKind": "none",
+   "act": null,
+   "comments": 0,
+   "outcome": "",
+   "lens": "flake",
+   "label": "flake",
+   "labelKind": null,
+   "idx": 11,
+   "of": 12
+  },
+  {
+   "id": "t_95000f55",
+   "board": "hermes-approvals-ui",
+   "title": "deck flake: root cause of the chip /reviews check (retry)",
+   "pipe": "deck",
+   "step": "flake",
+   "role": "detective",
+   "status": "blocked",
+   "assignee": "default",
+   "created": 1792420863,
+   "done": null,
+   "maxrt": 5400,
+   "retries": 1,
+   "reason": "Ran 4h 58m, past its 1h 30m time limit, then ended as crashed; retries used 1/1",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792420905,
+     "e": 1792438796,
+     "o": "crashed",
+     "sum": "",
+     "err": "pid 30928 not alive Worker's last output: \" +global.IS_REACT_ACT_ENVIRONMENT = true const React = (await import('react')).default const { useEffect, useState, useRef } = React const { createRoot } = a…"
+    }
+   ],
+   "usd": 2.56,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "",
+   "story": {
+    "cause": "silent",
+    "facts": {
+     "kids": 0,
+     "into": 2227,
+     "lastLife": 1792423132,
+     "silentFor": 15664,
+     "allowed": 1
+    },
+    "asked": "Find the ROOT CAUSE of a flaky check; do not guess.",
+    "question": "",
+    "tl": [
+     {
+      "ts": 1792420863,
+      "tone": "plain",
+      "k": "createdYou",
+      "a": [],
+      "q": ""
+     },
+     {
+      "ts": 1792420905,
+      "tone": "work",
+      "k": "started",
+      "a": [],
+      "q": ""
+     },
+     {
+      "ts": 1792423132,
+      "tone": "warn",
+      "k": "lastLife",
+      "a": [
+       2227,
+       15664
+      ],
+      "q": ""
+     },
+     {
+      "ts": 1792426305,
+      "tone": "warn",
+      "k": "limitRan",
+      "a": [
+       5400
+      ],
+      "q": ""
+     },
+     {
+      "ts": 1792438796,
+      "tone": "warn",
+      "k": "quiet",
+      "a": [],
+      "q": ""
+     },
+     {
+      "ts": 1792438796,
+      "tone": "bad",
+      "k": "crashError",
+      "a": [
+       17891
+      ],
+      "q": "fault const { useEffect, useState, useRef } = React const { createRoot } = await import('react-dom/client') ┊ ⚡ preparing mcp__terminal… 💻 $ node _repro_unmount.mjs 0.9s ┊ ⚡ preparing mcp__write_file…"
+     },
+     {
+      "ts": 1792438796,
+      "tone": "bad",
+      "k": "gaveUp",
+      "a": [
+       1
+      ],
+      "q": ""
+     }
+    ]
+   },
+   "lens": "flake",
+   "label": "flake",
+   "labelKind": null,
+   "idx": 12,
+   "of": 12
+  },
+  {
+   "id": "t_685b2b0a",
+   "board": "hermes-approvals-ui",
+   "title": "needs-you T1: headline, two gauges, footer promise",
+   "pipe": "needs-you",
+   "step": "T1",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792486651,
+   "done": 1792490806,
+   "maxrt": 5400,
+   "retries": null,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792486694,
+     "e": 1792488461,
+     "o": "review_requested",
+     "sum": "Implemented Task 1 (needs-you redesign): new top band in desktop/plugin.js (date, headline \"N things need you\"/all-clear, word counts, Memory/Profile gauges) replacing the 4-box KPI grid; tabs renamed Pending→Needs you (badge) and History→Activity; footer hint replaced with the safety-promise sentence. Test files (render_check.mjs, preview.mjs, canary_audit.py) updated to match. All CI gates green: audit=0 canary=0 c…",
+     "err": ""
+    },
+    {
+     "s": 1792488514,
+     "e": 1792488754,
+     "o": "changes_requested",
+     "sum": "Implementation and visuals match the brief and all gates pass (52/52), but three required deliverables from the brief are missing: (1) no commit exists on design/needs-you — all four changed files (desktop/plugin.js, tests/render_check.mjs, tests/preview.mjs, tests/canary_audit.py) are still uncommitted working-tree changes; (2) CHANGELOG.md has no new line under the unreleased version; (3) the report file .superpowe…",
+     "err": ""
+    },
+    {
+     "s": 1792488757,
+     "e": 1792489071,
+     "o": "review_requested",
+     "sum": "Addressed all 3 review findings: committed as 4fa0280 \"needs you: a headline that speaks, two gauges, a footer that makes the promise\" (single commit, exact required subject); added a CHANGELOG.md Unreleased section describing the redesign; wrote the full report to .superpowers/sdd/needs-you/task-1-report.md (what was built, RED/GREEN evidence, visual comparison, files changed, concerns). Re-ran full gate suite after…",
+     "err": ""
+    },
+    {
+     "s": 1792489121,
+     "e": 1792489359,
+     "o": "changes_requested",
+     "sum": "Commit/CHANGELOG/report and the gauge-ring fix are all confirmed good. But the 420px narrow-frame overflow (overflowPx=85, .pa-cols clipped to scrollW 503 vs frame 420) from the prior review round is still reproducible on current HEAD (4fa0280) — I re-ran preview.mjs + shot.mjs myself just now on both themes and got the same MEASUREMENT FAILED line as before. Fix the top band's narrow-width layout so it doesn't overf…",
+     "err": ""
+    },
+    {
+     "s": 1792489364,
+     "e": 1792489900,
+     "o": "review_requested",
+     "sum": "Fixed the round-2 narrow-frame overflow: .pa-gauges now stacks vertically (not side by side) and .pa-gauge-file ellipsizes at the existing 560px container breakpoint, so the 420px frame no longer forces .pa-top-side/.pa-cols past its width. Verified live (not reusing old logs): node preview.mjs + node shot.mjs on both themes now end in \"gate OK ... overflow 0 · clipped 0\" with no MEASUREMENT FAILED line, and the narr…",
+     "err": ""
+    },
+    {
+     "s": 1792489910,
+     "e": 1792490221,
+     "o": "changes_requested",
+     "sum": "Everything from rounds 1-2 is now confirmed fixed (commit/CHANGELOG/report, gauge rings, narrow-pane overflow all verified live on HEAD fb41bad). One leftover: tests/_ny1-dark.png and tests/_ny1-light.png are still git-tracked, despite the explicit controller instruction (comment at 12:48) to untrack them. Run `git rm --cached tests/_ny1-dark.png tests/_ny1-light.png`, commit that by name, verify `git ls-tree -r HEAD…",
+     "err": ""
+    },
+    {
+     "s": 1792490274,
+     "e": 1792490568,
+     "o": "review_requested",
+     "sum": "Round-3 finding fixed: tests/_ny1-dark.png and tests/_ny1-light.png untracked via `git rm --cached` (kept on disk) and committed by name as d048a22, on top of fb41bad. Verified `git ls-tree -r HEAD --name-only | grep _ny1` is empty. Re-ran full gate suite (audit=0 canary=0 contract=0 contract-canary=0 selftest=0 regress=0 render=0 preview=0, 52/52) and an independent preview.mjs + shot.mjs narrow-pane check showing o…",
+     "err": ""
+    },
+    {
+     "s": 1792490576,
+     "e": 1792490806,
+     "o": "completed",
+     "sum": "Round-4 (contract lens, full re-audit) approved on commit d048a22. Verified independently: git show d048a22 touches only tests/_ny1-dark.png and tests/_ny1-light.png (both removed from the index, 0 insertions/deletions) — `git ls-tree -r HEAD --name-only | grep _ny1` is empty, resolving the round-3 finding, with no change to desktop/plugin.js/CHANGELOG.md/report beyond that commit. Full gate suite re-run live: audit=…",
+     "err": ""
+    }
+   ],
+   "usd": 9.43,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 5,
+   "outcome": "Round-4 (contract lens, full re-audit) approved on commit d048a22.",
+   "lens": null,
+   "label": "Headline, two gauges, footer promise",
+   "labelKind": null,
+   "idx": 1,
+   "of": 11
+  },
+  {
+   "id": "t_967e69ca",
+   "board": "hermes-approvals-ui",
+   "title": "needs-you T2: hollow rings, one record at a time, Up next, Just done",
+   "pipe": "needs-you",
+   "step": "T2",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792491061,
+   "done": 1792495184,
+   "maxrt": 5400,
+   "retries": null,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792491121,
+     "e": 1792492521,
+     "o": "blocked",
+     "sum": "Part A (gauge-hollow fix) is done, gated, and committed as 6e4273a. Part B (front-only queue card) requires a scope decision: the brief scopes test adaptation to 4 blocks, but the structural change actually breaks ~25 render_check.mjs blocks owned by later tasks (card content). See comment with 3 options and the full writeup at <home>/AppData/Local/hermes/cache/scratch/pa-ny/card-impl-2-conflict.md.",
+     "err": ""
+    },
+    {
+     "s": 1792495184,
+     "e": 1792495184,
+     "o": "completed",
+     "sum": "Part A done (6e4273a, hollow gauge rings, gates green). Part B superseded: the owner chose option A (merge the rest of Task 2 with Task 3 so the ~25 affected render blocks are rewritten once); continued in a new card with task-23-brief.md.",
+     "err": ""
+    }
+   ],
+   "usd": 3.37,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 1,
+   "outcome": "Part A done (6e4273a, hollow gauge rings, gates green).",
+   "lens": null,
+   "label": "Hollow rings, one record at a time, Up next, Just done",
+   "labelKind": null,
+   "idx": 2,
+   "of": 11
+  },
+  {
+   "id": "t_91fd4c65",
+   "board": "hermes-approvals-ui",
+   "title": "needs-you T2+3: one record at a time, and the front card that explains it",
+   "pipe": "needs-you",
+   "step": "T2+3",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792495184,
+   "done": 1792496164,
+   "maxrt": 9000,
+   "retries": null,
+   "reason": "",
+   "parents": [],
+   "children": [
+    "t_036e72b1"
+   ],
+   "runs": [
+    {
+     "s": 1792495188,
+     "e": 1792496164,
+     "o": "completed",
+     "sum": "Status DONE_WITH_CONCERNS | commit bcdd409 \"needs you: thin rings\" (gauge percent no longer overlaps the ring; FS.gauge added, 12f gauge-thin-ring test red-on-base/green-on-head) | gates: v0.22.0 audit=0 canary=0 contract=0 contract-canary=0 selftest=0 regress=0 render=0 preview=0 | screenshot: tests/_t23-rings-dark.png (also scratch/pa-ny/_t23-rings-dark.png) | concerns: scope items 2+3 (stage/queue/UpNext/JustDone/…",
+     "err": ""
+    }
+   ],
+   "usd": 1.53,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "commit bcdd409 \"needs you: thin rings\" (gauge percent no longer overlaps the ring;",
+   "lens": null,
+   "label": "One record at a time, and the front card that explains it",
+   "labelKind": null,
+   "idx": 3,
+   "of": 11
+  },
+  {
+   "id": "t_036e72b1",
+   "board": "hermes-approvals-ui",
+   "title": "needs-you T2+3 continued: stage, queue, Up next/Just done, and the front card",
+   "pipe": "needs-you",
+   "step": "T2+3 continued",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792496157,
+   "done": 1792496242,
+   "maxrt": null,
+   "retries": null,
+   "reason": "",
+   "parents": [
+    "t_91fd4c65"
+   ],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792496189,
+     "e": 1792496189,
+     "o": "blocked",
+     "sum": "Held by the controller: this card was spawned by a worker (against the 'never spawn' rule) and lets each run spawn another child without a cap. Replaced by a controller-written card with a hard no-spawn rule.",
+     "err": ""
+    },
+    {
+     "s": 1792496242,
+     "e": 1792496242,
+     "o": "completed",
+     "sum": "Not run. Superseded by controller cards (card A stage, then B front card, then C pictures) with a hard no-spawn rule; this worker-spawned card allowed unbounded continuation chains.",
+     "err": ""
+    }
+   ],
+   "usd": 0.0,
+   "usdKind": "none",
+   "act": null,
+   "comments": 0,
+   "outcome": "Not run.",
+   "lens": null,
+   "label": "Stage, queue, Up next/Just done, and the front card",
+   "labelKind": null,
+   "idx": 4,
+   "of": 11
+  },
+  {
+   "id": "t_874aedbd",
+   "board": "hermes-approvals-ui",
+   "title": "needs-you T2+3 card A: the stage (one record at a time, Up next, Just done)",
+   "pipe": "needs-you",
+   "step": "T2+3 card A",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792496242,
+   "done": 1792499125,
+   "maxrt": 7200,
+   "retries": null,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792496280,
+     "e": 1792499125,
+     "o": "completed",
+     "sum": "Finished Task 23 (card-impl-23a): redesigned the Needs-you pane from a multi-card grid to a single front card + \"Up next\" sidebar (with Just done / All clear / Later / Undo copy), added i18n keys and .pa-stage/.pa-upnext/.pa-side CSS, replaced PendingList with a new NeedsYou component plus UpNextRow (keeps bulk-select checkboxes on sidebar rows), and reworked every affected block in tests/render_check.mjs (toFront/li…",
+     "err": ""
+    }
+   ],
+   "usd": 8.63,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 1,
+   "outcome": "Finished Task 23 (card-impl-23a): redesigned the Needs-you pane from a multi-card grid to a single front card + \"Up next\" sidebar (with Just done / All clear / Later / Un",
+   "lens": null,
+   "label": "The stage (one record at a time, Up next, Just done)",
+   "labelKind": null,
+   "idx": 5,
+   "of": 11
+  },
+  {
+   "id": "t_af122380",
+   "board": "hermes-approvals-ui",
+   "title": "needs-you T2+3 card A2: finish the stage (gates, missing tests, clipping, look)",
+   "pipe": "needs-you",
+   "step": "T2+3 card A2",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792499340,
+   "done": 1792501864,
+   "maxrt": 5400,
+   "retries": null,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792499375,
+     "e": 1792501864,
+     "o": "completed",
+     "sum": "Fixed all 3 canary mismatches (bulk-checkbox literal, duplicate border-radius via a ::after pseudo instead of a second DOM edge, and the GroupCard/PendingCard ternary) plus the audit regression it caused; moved Later into the card's own action row; coloured Up-next dots by the record's existing state tone instead of flat grey; removed the nowrap/ellipsis truncation on Up-next and Just-done titles so they wrap instead…",
+     "err": ""
+    }
+   ],
+   "usd": 8.14,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "Fixed all 3 canary mismatches (bulk-checkbox literal, duplicate border-radius via a ::after pseudo instead of a second DOM edge, and the GroupCard/PendingCard ternary) pl",
+   "lens": null,
+   "label": "Finish the stage (gates, missing tests, clipping, look)",
+   "labelKind": null,
+   "idx": 6,
+   "of": 11
+  },
+  {
+   "id": "t_f27b4db9",
+   "board": "hermes-approvals-ui",
+   "title": "needs-you T2+3 card B: the front card (what Hermes wants, what it changes, what was checked)",
+   "pipe": "needs-you",
+   "step": "T2+3 card B",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792502273,
+   "done": 1792506200,
+   "maxrt": 7200,
+   "retries": null,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792502302,
+     "e": 1792506200,
+     "o": "completed",
+     "sum": "Finished Task 23's unified FrontCard redesign in desktop/plugin.js: merged PendingCard/GroupCard into one FrontCard with plain-language ask/hero/effect lines ahead of the Change detail (now gated by a \"Show the full change\" toggle), per-skill-group badges+controls, group-specific Approve/Reject-all wording, restored skill-kind title prefixes (\"New skill: x\" / \"Edit skill: x\" / \"Delete skill: x\") and the staged-at rel…",
+     "err": ""
+    }
+   ],
+   "usd": 12.49,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "Finished Task 23's unified FrontCard redesign in desktop/plugin.js: merged PendingCard/GroupCard into one FrontCard with plain-language ask/hero/effect lines ahead of the",
+   "lens": null,
+   "label": "The front card (what Hermes wants, what it changes, what was checked)",
+   "labelKind": null,
+   "idx": 7,
+   "of": 11
+  },
+  {
+   "id": "t_b2940768",
+   "board": "hermes-approvals-ui",
+   "title": "needs-you T2+3 card B2: finish the front card (shot gate, mockup order, short version, nine tests)",
+   "pipe": "needs-you",
+   "step": "T2+3 card B2",
+   "role": "gate",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792506430,
+   "done": 1792511264,
+   "maxrt": 7200,
+   "retries": null,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792506437,
+     "e": 1792509199,
+     "o": "review_requested",
+     "sum": "Implemented the pre-review → \"Show the full change\" move and the fix-as-primary-action change for task 23; adapted every affected render_check.mjs block (6, 19, 20, 21, 22, 23, UI-review/a11y, the deleting-change-in-a-set check) plus added the 9 required Task 3 tests (hero-memory, hero-why, checks-pass, checks-not-run, checks-finding, fix-short, group-hero, full-change, labels). Full suite green (46 blocks); spot-che…",
+     "err": ""
+    },
+    {
+     "s": 1792509235,
+     "e": 1792509457,
+     "o": "changes_requested",
+     "sum": "Re-run the red check against the card's actual BASE (e3b6f29), not 6e4273a: `git show e3b6f29:desktop/plugin.js` → render_check.mjs crashes at line 875/2391 before any of the 9 new tests run, so fix whatever pre-existing block crashes on BASE (or confirm/patch render_check.mjs so the new tests fail cleanly instead of the run dying) and quote each of the 9 tests' own fail line. Then run the full gates command from the…",
+     "err": ""
+    },
+    {
+     "s": 1792509477,
+     "e": 1792511264,
+     "o": "completed",
+     "sum": "Fixed all 4 review findings and completed card B2: the BASE (e3b6f29) render_check.mjs crash is fixed (click() is now null-safe), all 9 Task 3 tests confirmed red-on-BASE/green-on-HEAD, full gates command is green, preview+shot (dark/light) both report gate OK with toneText 0, PNGs copied to scratch/pa-ny, and task-23b-report.md written. Also fixed two real bugs the artifact-lens review missed: a light-mode AA contra…",
+     "err": ""
+    }
+   ],
+   "usd": 11.6,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 2,
+   "outcome": "Fixed all 4 review findings and completed card B2: the BASE (e3b6f29) render_check.mjs crash is fixed (click() is now null-safe), all 9 Task 3 tests confirmed red-on-BASE",
+   "lens": null,
+   "label": "Finish the front card (shot gate, mockup order, short version, nine tests)",
+   "labelKind": null,
+   "idx": 8,
+   "of": 11
+  },
+  {
+   "id": "t_23243e22",
+   "board": "hermes-approvals-ui",
+   "title": "needs-you T2+3 card C: preview frames, shots against the mockup, visual polish",
+   "pipe": "needs-you",
+   "step": "T2+3 card C",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792511508,
+   "done": 1792512362,
+   "maxrt": 5400,
+   "retries": null,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792511546,
+     "e": 1792512362,
+     "o": "completed",
+     "sum": "Card C done: rewrote tests/preview.mjs's frame set from the stale pre-redesign 8 frames to the exact 7 scenes the brief asks for (3-waiting/memory front, fix record front, group record front, full-change open, all-clear, narrow 420px, running-review front), fixed the shot gate's pill-language check by opening the group's full change, and verified against the mockup PNGs. No plugin.js/CSS changes were needed — the sta…",
+     "err": ""
+    }
+   ],
+   "usd": 2.11,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "Card C done: rewrote tests/preview.mjs's frame set from the stale pre-redesign 8 frames to the exact 7 scenes the brief asks for (3-waiting/memory front, fix record front",
+   "lens": null,
+   "label": "Preview frames, shots against the mockup, visual polish",
+   "labelKind": null,
+   "idx": 9,
+   "of": 11
+  },
+  {
+   "id": "t_69a0952c",
+   "board": "hermes-approvals-ui",
+   "title": "needs-you T5: Activity and Memory speak the same language (+ restore dropped preview frames)",
+   "pipe": "needs-you",
+   "step": "T5",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792512534,
+   "done": 1792514965,
+   "maxrt": 7200,
+   "retries": null,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792512578,
+     "e": 1792514965,
+     "o": "completed",
+     "sum": "Implemented Task 5 of the needs-you redesign: Activity rows now say what happened in words (Saved to Profile/memory, Saved skill, Not saved, Couldn't save — reason) grouped by day with a zero-omitting \"Today · N saved · N not saved · N failed\" header; the Memory tab leads with a big fill-state ring per file; and the front-card's heavy-fix-loss alert is restored to the closed card (a prior regression). All gates pass …",
+     "err": ""
+    }
+   ],
+   "usd": 6.01,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "Implemented Task 5 of the needs-you redesign: Activity rows now say what happened in words (Saved to Profile/memory, Saved skill, Not saved, Couldn't save — reason) group",
+   "lens": null,
+   "label": "Activity and Memory speak the same language (+ restore dropped preview frames)",
+   "labelKind": null,
+   "idx": 10,
+   "of": 11
+  },
+  {
+   "id": "t_a8161099",
+   "board": "hermes-approvals-ui",
+   "title": "needs-you fix F: Activity names itself; a failed record's badge stays short (+ shot gate catches it)",
+   "pipe": "needs-you",
+   "step": "fix F",
+   "role": "gate",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792515453,
+   "done": 1792516793,
+   "maxrt": 3600,
+   "retries": null,
+   "reason": "",
+   "parents": [],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792515493,
+     "e": 1792516793,
+     "o": "completed",
+     "sum": "Fix card F done: badge for a failed Activity record now carries only \"Couldn't save\" (reason stays in the card body, already there); timestamp uses the existing nowrap .pa-card-when class. shot.cjs gained cardWiderThanBox + bodyScrollX checks (the class of bug overflow/clipped never measured) — red on BASE naming #dd44ee55, gate OK on HEAD in both themes. All 10 \"History\"-tab strings (8 listed + 2 more found by grep)…",
+     "err": ""
+    }
+   ],
+   "usd": 2.56,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "badge for a failed Activity record now carries only \"Couldn't save\" (reason stays in the card body, already there);",
+   "lens": null,
+   "label": "Activity names itself; a failed record's badge stays short (+ shot gate catches it)",
+   "labelKind": null,
+   "idx": 11,
+   "of": 11
+  },
+  {
+   "id": "t_095df723",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r1 build",
+   "pipe": "app-layout r1",
+   "step": "build",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792580406,
+   "done": 1792599631,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [],
+   "children": [
+    "t_b7abdfcc",
+    "t_d42f9762",
+    "t_fef09acb",
+    "t_a4ee6e35"
+   ],
+   "runs": [
+    {
+     "s": 1792580441,
+     "e": 1792589316,
+     "o": "rate_limited",
+     "sum": "",
+     "err": "pid 9636 exited rate-limited (quota wall) — requeued without counting a failure"
+    },
+    {
+     "s": 1792589619,
+     "e": 1792589680,
+     "o": "crashed",
+     "sum": "",
+     "err": "pid 5784 exited with code 1 Worker's last output: ' Limit resets at 17:00 (in 32m). '"
+    },
+    {
+     "s": 1792589680,
+     "e": 1792589741,
+     "o": "crashed",
+     "sum": "",
+     "err": "pid 39908 exited with code 1 Worker's last output: ' Limit resets at 17:00 (in 32m). '"
+    },
+    {
+     "s": 1792596226,
+     "e": 1792596250,
+     "o": "blocked",
+     "sum": "paused by the chat session: Anthropic weekly limit is 100% used (resets 2026-10-28 17:00); a run now would only crash. Owner decides how to continue.",
+     "err": ""
+    },
+    {
+     "s": 1792596408,
+     "e": 1792599631,
+     "o": "completed",
+     "sum": "Builder round 1 READY: the app-layout split (bar, list and detail in Needs you, Activity and Memory) is on factory/app-layout at 720a764, and all 19 acceptance criteria are met with evidence in .factory/app-layout/build.md. All 123 R2 rows were checked against the drawn frames and none is missing. One copy deviation (M6, the note-delete text) needs the owner's nod.",
+     "err": ""
+    }
+   ],
+   "usd": 43.0,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 3,
+   "outcome": "Builder round 1 READY: the app-layout split (bar, list and detail in Needs you, Activity and Memory) is on factory/app-layout at 720a764, and all 19 acceptance criteria a",
+   "lens": "build",
+   "label": "build",
+   "labelKind": null,
+   "idx": 1,
+   "of": 6
+  },
+  {
+   "id": "t_b7abdfcc",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r1 security",
+   "pipe": "app-layout r1",
+   "step": "security",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792580411,
+   "done": 1792599777,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_095df723"
+   ],
+   "children": [
+    "t_de64b8fb"
+   ],
+   "runs": [
+    {
+     "s": 1792599686,
+     "e": 1792599777,
+     "o": "completed",
+     "sum": "VERDICT: PASS — layout-only panel change; backend, API wrapper, host calls and deps unchanged; no XSS sinks; destructive actions still two-step.",
+     "err": ""
+    }
+   ],
+   "usd": 0.63,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — layout-only panel change;",
+   "lens": "security",
+   "label": "security",
+   "labelKind": null,
+   "idx": 2,
+   "of": 6
+  },
+  {
+   "id": "t_d42f9762",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r1 ux",
+   "pipe": "app-layout r1",
+   "step": "ux",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792580415,
+   "done": 1792599807,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_095df723"
+   ],
+   "children": [
+    "t_de64b8fb"
+   ],
+   "runs": [
+    {
+     "s": 1792599686,
+     "e": 1792599807,
+     "o": "completed",
+     "sum": "VERDICT: PASS — app-layout round 1 UX review. Flow, empty/error/checking states, destructive two-step copy, accessibility (aria-current/pressed/keyshortcuts), narrow-width (420px) nav, and Activity/Memory copy parity all check out against the spec's R2-R7 requirements and the shot evidence; no blocking findings.",
+     "err": ""
+    }
+   ],
+   "usd": 0.53,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — app-layout round 1 UX review.",
+   "lens": "ux",
+   "label": "ux",
+   "labelKind": null,
+   "idx": 3,
+   "of": 6
+  },
+  {
+   "id": "t_fef09acb",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r1 ui",
+   "pipe": "app-layout r1",
+   "step": "ui",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792580420,
+   "done": 1792599843,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_095df723"
+   ],
+   "children": [
+    "t_de64b8fb"
+   ],
+   "runs": [
+    {
+     "s": 1792599686,
+     "e": 1792599843,
+     "o": "completed",
+     "sum": "VERDICT: CHANGES — the Alerts switch loses its only visible label (text hidden) at ≤480px, an undisclosed narrow-width behavior contrary to spec R1.5/N4 and the \"never swap text for a shorter variant\" rule; everything else (theme tokens, type scale, spacing, alignment, contrast dark/light, 1000/640/420 frames) checks out clean against the shots.",
+     "err": ""
+    }
+   ],
+   "usd": 0.61,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "CHANGES — the Alerts switch loses its only visible label (text hidden) at ≤480px, an undisclosed narrow-width behavior contrary to spec R1.5/N4 and the \"never swap text f",
+   "lens": "ui",
+   "label": "ui",
+   "labelKind": null,
+   "idx": 4,
+   "of": 6
+  },
+  {
+   "id": "t_a4ee6e35",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r1 code",
+   "pipe": "app-layout r1",
+   "step": "code",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792580424,
+   "done": 1792600049,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_095df723"
+   ],
+   "children": [
+    "t_de64b8fb"
+   ],
+   "runs": [
+    {
+     "s": 1792599686,
+     "e": 1792600049,
+     "o": "completed",
+     "sum": "VERDICT: PASS — all AGENTS.md validation gates re-run and match build.md's claimed evidence exactly (audit, canary, contract, backend selftest, 52/52 regressions, render_check green/red-648, 17 preview frames, shot gate OK, colour/backend/version greps). No findings.",
+     "err": ""
+    }
+   ],
+   "usd": 0.86,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — all AGENTS.md validation gates re-run and match build.md's claimed evidence exactly (audit, canary, contract, backend selftest, 52/52 regressions, render_check gre",
+   "lens": "code",
+   "label": "code",
+   "labelKind": null,
+   "idx": 5,
+   "of": 6
+  },
+  {
+   "id": "t_de64b8fb",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r1 gate",
+   "pipe": "app-layout r1",
+   "step": "gate",
+   "role": "gate",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792580429,
+   "done": 1792600117,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_b7abdfcc",
+    "t_d42f9762",
+    "t_fef09acb",
+    "t_a4ee6e35"
+   ],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792600050,
+     "e": 1792600117,
+     "o": "completed",
+     "sum": "Round 1 ended with CHANGES from ui (Alerts word hidden at ≤480px, plugin.js:973), PASS from security, ux and code. Created round 2 (build t_f840e5b9, lenses t_79f2cc0f/t_c5acea54/t_de1af4d9/t_d44f6363, gate t_516242e2), Budget from 1.",
+     "err": ""
+    }
+   ],
+   "usd": 0.53,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "Round 1 ended with CHANGES from ui (Alerts word hidden at ≤480px, plugin.js:973), PASS from security, ux and code.",
+   "lens": "gate",
+   "label": "gate",
+   "labelKind": null,
+   "idx": 6,
+   "of": 6
+  },
+  {
+   "id": "t_f840e5b9",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r2 build",
+   "pipe": "app-layout r2",
+   "step": "build",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792600093,
+   "done": 1792600649,
+   "maxrt": null,
+   "retries": null,
+   "reason": "",
+   "parents": [],
+   "children": [
+    "t_79f2cc0f",
+    "t_c5acea54",
+    "t_de1af4d9",
+    "t_d44f6363"
+   ],
+   "runs": [
+    {
+     "s": 1792600111,
+     "e": 1792600649,
+     "o": "completed",
+     "sum": "Round 2: the Alerts switch keeps its word at every pane width (only the pips hide at ≤480 px), commit 1d32feb; render_check gained a check that is red on the round-1 plugin.js. All AGENTS.md gates pass (audit, canary 79, contract, selftest, 52/52 regressions, render, preview, shot dark/light gate OK); build.md updated, 420 px shots re-taken.",
+     "err": ""
+    }
+   ],
+   "usd": 1.11,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "Round 2: the Alerts switch keeps its word at every pane width (only the pips hide at ≤480 px), commit 1d32feb;",
+   "lens": "build",
+   "label": "build",
+   "labelKind": null,
+   "idx": 1,
+   "of": 6
+  },
+  {
+   "id": "t_79f2cc0f",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r2 security",
+   "pipe": "app-layout r2",
+   "step": "security",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792600107,
+   "done": 1792600736,
+   "maxrt": null,
+   "retries": null,
+   "reason": "",
+   "parents": [
+    "t_f840e5b9"
+   ],
+   "children": [
+    "t_516242e2"
+   ],
+   "runs": [
+    {
+     "s": 1792600658,
+     "e": 1792600736,
+     "o": "completed",
+     "sum": "VERDICT: PASS — round-2 delta is one CSS rule removal (plugin.js:973) plus a render_check regex; no endpoint, request, rendering path or dependency changed, and the round-1 security notes still hold at 1d32feb.",
+     "err": ""
+    }
+   ],
+   "usd": 0.42,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — round-2 delta is one CSS rule removal (plugin.js:973) plus a render_check regex;",
+   "lens": "security",
+   "label": "security",
+   "labelKind": null,
+   "idx": 2,
+   "of": 6
+  },
+  {
+   "id": "t_c5acea54",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r2 ux",
+   "pipe": "app-layout r2",
+   "step": "ux",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792600107,
+   "done": 1792600744,
+   "maxrt": null,
+   "retries": null,
+   "reason": "",
+   "parents": [
+    "t_f840e5b9"
+   ],
+   "children": [
+    "t_516242e2"
+   ],
+   "runs": [
+    {
+     "s": 1792600658,
+     "e": 1792600744,
+     "o": "completed",
+     "sum": "VERDICT: PASS — round 2's one-line fix (Alerts word stays visible at ≤480px) matches round-1 UX approval; no new findings.",
+     "err": ""
+    }
+   ],
+   "usd": 0.47,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — round 2's one-line fix (Alerts word stays visible at ≤480px) matches round-1 UX approval;",
+   "lens": "ux",
+   "label": "ux",
+   "labelKind": null,
+   "idx": 3,
+   "of": 6
+  },
+  {
+   "id": "t_d44f6363",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r2 code",
+   "pipe": "app-layout r2",
+   "step": "code",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792600107,
+   "done": 1792601261,
+   "maxrt": null,
+   "retries": null,
+   "reason": "",
+   "parents": [
+    "t_f840e5b9"
+   ],
+   "children": [
+    "t_516242e2"
+   ],
+   "runs": [
+    {
+     "s": 1792600658,
+     "e": 1792601261,
+     "o": "completed",
+     "sum": "VERDICT: PASS — round-2 code lens for app-layout. The round-2 fix (removing the hidden-word rule for .pa-alerts-word, with a new render_check case proven red on round-1's commit) is minimal and correct; all AGENTS.md validation gates re-run and match build.md's claimed evidence exactly (audit, canary 79, contract, backend selftest, 52/52 regressions, render_check green / red-1 on round-1 plugin.js, preview.mjs). No f…",
+     "err": ""
+    }
+   ],
+   "usd": 0.79,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — round-2 code lens for app-layout.",
+   "lens": "code",
+   "label": "code",
+   "labelKind": null,
+   "idx": 4,
+   "of": 6
+  },
+  {
+   "id": "t_de1af4d9",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r2 ui",
+   "pipe": "app-layout r2",
+   "step": "ui",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792600107,
+   "done": 1792600790,
+   "maxrt": null,
+   "retries": null,
+   "reason": "",
+   "parents": [
+    "t_f840e5b9"
+   ],
+   "children": [
+    "t_516242e2"
+   ],
+   "runs": [
+    {
+     "s": 1792600658,
+     "e": 1792600790,
+     "o": "completed",
+     "sum": "VERDICT: PASS — round-1 ui finding (Alerts word hidden at ≤480px) is fixed; verified in re-taken 420px shots and a fresh render_check.mjs run (green).",
+     "err": ""
+    }
+   ],
+   "usd": 0.35,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — round-1 ui finding (Alerts word hidden at ≤480px) is fixed;",
+   "lens": "ui",
+   "label": "ui",
+   "labelKind": null,
+   "idx": 5,
+   "of": 6
+  },
+  {
+   "id": "t_516242e2",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r2 gate",
+   "pipe": "app-layout r2",
+   "step": "gate",
+   "role": "gate",
+   "status": "archived",
+   "assignee": "default",
+   "created": 1792600112,
+   "done": null,
+   "maxrt": null,
+   "retries": null,
+   "reason": "",
+   "parents": [
+    "t_79f2cc0f",
+    "t_c5acea54",
+    "t_de1af4d9",
+    "t_d44f6363"
+   ],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792601265,
+     "e": 1792601404,
+     "o": "blocked",
+     "sum": "escalation: all 4 lenses PASS, 19/19 criteria met, merge-tree clean; only the owner can accept the M6 note-delete wording (\"undoable from Activity\" instead of the mockup's \"cannot be undone\"). See decision.md.",
+     "err": ""
+    }
+   ],
+   "usd": 0.74,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "escalation: all 4 lenses PASS, 19/19 criteria met, merge-tree clean;",
+   "lens": "gate",
+   "label": "gate",
+   "labelKind": null,
+   "idx": 6,
+   "of": 6
+  },
+  {
+   "id": "t_b10c40c6",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r3 build",
+   "pipe": "app-layout r3",
+   "step": "build",
+   "role": "builder",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792602252,
+   "done": 1792607821,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [],
+   "children": [
+    "t_ed163826",
+    "t_2cee57bc",
+    "t_4a5e781f",
+    "t_e71cde81"
+   ],
+   "runs": [
+    {
+     "s": 1792602297,
+     "e": 1792605633,
+     "o": "blocked",
+     "sum": "paused by the chat session: job spend reached the owner's stop line ($47 of $50). Work so far is uncommitted in the worktree; resume from it, do not discard it.",
+     "err": ""
+    },
+    {
+     "s": 1792605939,
+     "e": 1792607821,
+     "o": "completed",
+     "sum": "Round 3 is committed as 835d4f6. It covers rework-2 items 1–14 and both owner decisions: select mode now follows the mockup, the top bar shows memory meters, \"Needs one edit\" uses the warning tone, decision footers stay on one row, the narrow Memory tab is one scroll, and \"All caught up\" has no list column. All gates pass, and render_check reports 62 problems on 1d32feb. Shots were retaken dark and light at 1000/640/…",
+     "err": ""
+    }
+   ],
+   "usd": 16.5,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 2,
+   "outcome": "Round 3 is committed as 835d4f6.",
+   "lens": "build",
+   "label": "build",
+   "labelKind": null,
+   "idx": 1,
+   "of": 6
+  },
+  {
+   "id": "t_ed163826",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r3 security",
+   "pipe": "app-layout r3",
+   "step": "security",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792602256,
+   "done": 1792607977,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_b10c40c6"
+   ],
+   "children": [
+    "t_b6ae8e73"
+   ],
+   "runs": [
+    {
+     "s": 1792607880,
+     "e": 1792607977,
+     "o": "completed",
+     "sum": "VERDICT: PASS — round-3 delta (1d32feb..835d4f6) is layout/copy/tests only: no endpoint, request, poll or dependency changed; top-bar meters reuse the existing /memory poll; two-step confirms and keyboard guards still hold in the redrawn select mode.",
+     "err": ""
+    }
+   ],
+   "usd": 0.52,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — round-3 delta (1d32feb..835d4f6) is layout/copy/tests only: no endpoint, request, poll or dependency changed;",
+   "lens": "security",
+   "label": "security",
+   "labelKind": null,
+   "idx": 2,
+   "of": 6
+  },
+  {
+   "id": "t_2cee57bc",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r3 ux",
+   "pipe": "app-layout r3",
+   "step": "ux",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792602259,
+   "done": 1792608020,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_b10c40c6"
+   ],
+   "children": [
+    "t_b6ae8e73"
+   ],
+   "runs": [
+    {
+     "s": 1792607880,
+     "e": 1792608020,
+     "o": "completed",
+     "sum": "VERDICT: PASS — round 3 (rework-2) UX review for app-layout. Select mode, all-caught-up, narrow Memory/footers, warning tone, outline reject, not-reviewed footer, activity counts and crumb separator all verified against the owner's rework-2.md items and mockups; no findings.",
+     "err": ""
+    }
+   ],
+   "usd": 0.63,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — round 3 (rework-2) UX review for app-layout.",
+   "lens": "ux",
+   "label": "ux",
+   "labelKind": null,
+   "idx": 3,
+   "of": 6
+  },
+  {
+   "id": "t_4a5e781f",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r3 ui",
+   "pipe": "app-layout r3",
+   "step": "ui",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792602263,
+   "done": 1792608052,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_b10c40c6"
+   ],
+   "children": [
+    "t_b6ae8e73"
+   ],
+   "runs": [
+    {
+     "s": 1792607880,
+     "e": 1792608052,
+     "o": "completed",
+     "sum": "VERDICT: PASS — round-3 ui lens for app-layout. All 14 rework-2 items and both owner decisions verified in the round-3 shots (select mode, memory-meter bar, All caught up with no list column, narrow Memory one-scroll, one-row narrow footers, warning tone, outline buttons, etc.); no findings.",
+     "err": ""
+    }
+   ],
+   "usd": 0.69,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — round-3 ui lens for app-layout.",
+   "lens": "ui",
+   "label": "ui",
+   "labelKind": null,
+   "idx": 4,
+   "of": 6
+  },
+  {
+   "id": "t_e71cde81",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r3 code",
+   "pipe": "app-layout r3",
+   "step": "code",
+   "role": "review",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792602266,
+   "done": 1792608621,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_b10c40c6"
+   ],
+   "children": [
+    "t_b6ae8e73"
+   ],
+   "runs": [
+    {
+     "s": 1792607880,
+     "e": 1792608621,
+     "o": "completed",
+     "sum": "VERDICT: PASS — round-3 code lens for app-layout. All AGENTS.md validation commands reproduced and matched build.md's claims (audit/canary/contract/backend/regress/render_check/preview all green, both red-runs correctly red); AC12/13/18/19 greps and git-status checked directly. No findings; diff is correct, simple, and reuses existing patterns.",
+     "err": ""
+    }
+   ],
+   "usd": 1.66,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "PASS — round-3 code lens for app-layout.",
+   "lens": "code",
+   "label": "code",
+   "labelKind": null,
+   "idx": 5,
+   "of": 6
+  },
+  {
+   "id": "t_b6ae8e73",
+   "board": "hermes-approvals-ui",
+   "title": "app-layout r3 gate",
+   "pipe": "app-layout r3",
+   "step": "gate",
+   "role": "gate",
+   "status": "done",
+   "assignee": "default",
+   "created": 1792602270,
+   "done": 1792610504,
+   "maxrt": null,
+   "retries": 2,
+   "reason": "",
+   "parents": [
+    "t_ed163826",
+    "t_2cee57bc",
+    "t_4a5e781f",
+    "t_e71cde81"
+   ],
+   "children": [],
+   "runs": [
+    {
+     "s": 1792608669,
+     "e": 1792608839,
+     "o": "blocked",
+     "sum": "merge-ready: app-layout r3 — all four lenses PASS, all 19 criteria met (gate re-ran audit_static + render_check at 835d4f6), no merge conflict with design/needs-you, M6 accepted in rework-2. See decision.md.",
+     "err": ""
+    },
+    {
+     "s": 1792610504,
+     "e": 1792610504,
+     "o": "completed",
+     "sum": "Owner chose option 1: chat session fixed 3 more findings plus a text-over-text bar overlap at 640/420 (commit 8236ff2, gates 52/52, shot gate 6/6 clean); merged into design/needs-you as c869941.",
+     "err": ""
+    }
+   ],
+   "usd": 0.83,
+   "usdKind": "estimated",
+   "act": null,
+   "comments": 0,
+   "outcome": "Owner chose option 1: chat session fixed 3 more findings plus a text-over-text bar overlap at 640/420 (commit 8236ff2, gates 52/52, shot gate 6/6 clean);",
+   "lens": "gate",
+   "label": "gate",
+   "labelKind": null,
+   "idx": 6,
+   "of": 6
+  }
+ ],
+ "stats": {
+  "builder": {
+   "n": 43,
+   "p25": 538,
+   "p50": 1242,
+   "p75": 2279,
+   "p90": 3068,
+   "usd": 5.24
+  },
+  "review": {
+   "n": 117,
+   "p25": 80,
+   "p50": 109,
+   "p75": 233,
+   "p90": 553,
+   "usd": 0.52
+  },
+  "gate": {
+   "n": 27,
+   "p25": 0,
+   "p50": 0,
+   "p75": 0,
+   "p90": 67,
+   "usd": 0.61
+  }
+ },
+ "errors": []
+}

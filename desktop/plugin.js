@@ -1,151 +1,385 @@
 import { host, usePluginI18n } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 
 const ID = 'wingline'
 const ROUTE = '/wingline'
 const POLL_MS = 5000
-const GAP = 360
 const KANBAN = '/api/plugins/kanban'
-const VIEW_KEY = 'view'
-const BOARD_KEY = 'board'
+const UNDO_MS = 8000
 const LOG_TAIL = 131072
-const BOX = { needs: 460, working: 260, pipeline: 420, timeline: 460, drawer: 760, error: 132, log: 300, problems: 132, dialog: 720 }
-const ROLES = ['builder', 'review', 'gate', 'detective']
-const ROLE_TONE = { builder: 'var(--ui-blue)', review: 'var(--ui-purple)', gate: 'var(--ui-orange)', detective: 'var(--ui-cyan)' }
-const STATUS_KEYS = ['blocked', 'running', 'todo', 'ready', 'triage', 'scheduled', 'review', 'done', 'archived']
-const STATUS_TONE = { blocked: 'var(--ui-yellow)', running: 'var(--ui-accent)', done: 'var(--ui-green)', archived: 'var(--ui-text-quaternary)' }
-const FILTERS = { needs: ['blocked'], working: ['running'], queued: ['todo', 'ready', 'triage'], done: ['done'] }
-const OK_OUTCOMES = ['completed', 'ok', 'done', 'review_requested']
-const PAUSE_OUTCOMES = ['blocked', 'changes_requested', 'needs_input']
+const QUIET = 900
+const DONE_PAGE = 8
+const UNREAD_KEY = 'seen'
+const ROLEO = { builder: 0, detective: 1, review: 2, gate: 3 }
+const COLS = [
+  ['needs', 'var(--ui-red)'],
+  ['working', 'var(--ui-yellow)'],
+  ['queued', 'var(--ui-text-tertiary)'],
+  ['done', 'var(--ui-text-quaternary)']
+]
+const HUES = ['var(--ui-blue)', 'var(--ui-cyan)', 'var(--ui-purple)', 'var(--ui-orange)', 'var(--ui-green)', 'var(--ui-warm)', 'var(--ui-accent)']
+const LENSES = ['build', 'security', 'ux', 'ui', 'code', 'gate', 'flake']
+const CHECKS = ['security', 'ux', 'ui', 'code']
+const CAUSES = ['usage_limit', 'silent', 'time_limit', 'missing_skill', 'error', 'asks_you', 'review']
+const DUR_ARGS = { rateLimited: [0], crashLimit: [0], crashError: [0], lastLife: [0, 1], limitRan: [0] }
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const ICONS = {
+  search: [['circle', { cx: 11, cy: 11, r: 7 }], ['path', { d: 'm20 20-3.5-3.5' }]],
+  play: [['path', { d: 'M7 4v16l13-8z', fill: 'currentColor' }]],
+  pause: [['path', { d: 'M8 5v14M16 5v14' }]],
+  x: [['path', { d: 'M6 6l12 12M18 6 6 18' }]],
+  chev: [['path', { d: 'm9 6 6 6-6 6' }]],
+  rewind: [['path', { d: 'M3 12a9 9 0 1 0 3-6.7L3 8' }], ['path', { d: 'M3 3v5h5' }]],
+  board: [['rect', { x: 3, y: 4, width: 5, height: 16, rx: 1.5 }], ['rect', { x: 10, y: 4, width: 5, height: 10, rx: 1.5 }], ['rect', { x: 17, y: 4, width: 4, height: 13, rx: 1.5 }]],
+  bolt: [['path', { d: 'M13 3 5 14h6l-1 7 8-11h-6z' }]]
+}
 let ctxRef = null
 
 const BUNDLES = {
   en: {
     wingline: {
       title: 'Wingline',
-      subtitle: 'Your Kanban boards, from the human side',
       nav: 'Wingline',
-      boardPick: 'Kanban board',
-      view: { label: 'View', board: 'Board', factory: 'Factory' },
-      count: { needs: 'Needs you', working: 'Working', queued: 'Queued', done: 'Done', spend: 'Spend', filter: label => `Show only ${label} in the timeline` },
-      updated: s => `Updated ${s}`,
-      loading: 'Loading the board…',
-      empty: 'This board has no tasks yet.',
+      loading: 'Loading your boards…',
+      empty: 'No Kanban board has tasks yet.',
       tryAgain: 'Try again',
-      unit: { s: n => `${n} s`, min: n => `${n} min`, hm: (h, m) => (m ? `${h}h ${m}m` : `${h}h`) },
-      problems: {
-        title: n => (n === 1 ? '1 problem reading or changing the board' : `${n} problems reading or changing the board`),
-        dismiss: 'Dismiss',
-        overview: 'Reading the board',
-        backend: s => `Wingline backend (${s})`
+      unit: { s: n => `${n}s`, m: n => `${n}m`, hm: (h, m) => `${h}h ${m}m`, dh: (d, h) => `${d}d ${h}h` },
+      ago: d => `${d} ago`,
+      justNow: 'just now',
+      err: {
+        noRest: 'The Hermes plugin bridge (ctx.rest) is not available.',
+        noBridge: 'The Hermes desktop bridge (window.hermesDesktop.api) is not available.',
+        shape: 'The Wingline backend answered with an unexpected shape.',
+        refused: 'Hermes did not apply the change.',
+        noId: 'Hermes created no task id.'
       },
-      needs: {
-        title: 'Needs you',
-        none: 'Nothing is waiting for you.',
-        count: n => (n === 1 ? '1 task' : `${n} tasks`),
-        reasonUnknown: 'Hermes stopped this task without a reason on record.',
-        retries: (a, b) => `Retries used ${a}/${b}`,
-        retriesNoMax: a => `Retries used ${a}`,
-        worked: d => `${d} worked`,
-        stopped: s => `stopped ${s}`,
-        attempts: n => (n === 1 ? '1 attempt' : `${n} attempts`)
+      rail: {
+        search: 'Search',
+        searchTitle: 'Search tasks and commands (/)',
+        decisions: n => (n === 1 ? '1 decision waits for you' : `${n} decisions wait for you`),
+        nothing: 'Nothing needs you',
+        boards: 'Boards',
+        agents: 'Live agents',
+        noAgent: 'No agent is working.',
+        working: 'working',
+        live: when => `Live from Hermes Kanban · updated ${when}`,
+        problems: n => (n === 1 ? '1 source could not be read' : `${n} sources could not be read`)
       },
-      working: {
-        title: 'Working now',
-        none: 'No worker is running.',
-        lastStop: s => `The last one stopped ${s}. New work starts here when a task is ready.`,
-        nothingYet: 'Nothing has run on this board yet.',
-        elapsed: d => `running for ${d}`,
-        limit: d => `limit ${d}`,
-        noActivity: 'No activity reported yet.',
-        ago: d => `${d} ago`
+      top: {
+        meta: (n, usd) => `${n} tasks · ${usd}`,
+        filter: 'Filter cards…',
+        replaying: 'Replay',
+        replay: 'Replay',
+        goLive: 'Go live',
+        replayTitle: 'Replay this board (R)',
+        clockTitle: 'Hermes time, updated every 5 seconds'
       },
-      pipe: { title: 'Pipeline', sub: 'parents → children', none: 'No task on this board waits for another.' },
+      view: { board: 'Board', list: 'List', inbox: 'Inbox' },
+      col: { needs: 'Needs you', working: 'Working', queued: 'Queued', done: 'Done' },
+      pill: { needs: 'Needs you', working: 'Working', queued: 'Queued', done: 'Done', absent: 'Not created yet', gone: 'Removed' },
+      lens: { build: 'Build', security: 'Security check', ux: 'Usability check', ui: 'Visual check', code: 'Code check', gate: 'Your approval', flake: 'Find the flaky test' },
+      lensShort: { build: 'build', security: 'security', ux: 'usability', ui: 'visual', code: 'code', gate: 'approval', flake: 'flake' },
+      labelKind: { review: l => `Review: ${l}`, continued: l => `Continued: ${l}` },
+      card: {
+        checks: n => `${n} checks at the same time`,
+        round: (n, why) => `Round ${n} · ${why}`,
+        found: s => `${s} check found a problem`,
+        askedChanges: 'you asked for changes',
+        again: 'went round again',
+        tryN: n => `try ${n}`,
+        waitsFor: 'waits for ',
+        waitsMany: (a, b) => `${a} of ${b} earlier steps`,
+        ready: 'ready · starts when an agent is free',
+        readyMany: 'ready · start together when agents are free',
+        requeued: 'sent back to the queue',
+        withNote: n => `with your note “${n}”`,
+        usually: usd => `usually ≈ ${usd}`,
+        notes: n => (n === 1 ? '1 note' : `${n} notes`),
+        steps: (n, d) => `${n} steps · ${d}`,
+        more: n => `Show ${n} older pipelines`,
+        elapsed: d => `${d} elapsed`,
+        pastLimit: (d, l) => `${d} · past its ${l} limit`,
+        usualRange: (a, b) => `usually ${a}–${b}m`,
+        limit: l => `limit ${l}`,
+        working: 'working…',
+        tidy: 'tidied up its notes to keep working'
+      },
+      res: {
+        back: (s, n) => `Sent back: ${s} found a problem → round ${n}`,
+        backYou: n => `Checks passed, you asked for changes → round ${n}`,
+        merged: 'Merged into the main code',
+        mergedRound: n => `Merged into the main code in round ${n}`,
+        approved: 'Approved',
+        all: n => `All ${n} steps finished`,
+        some: (a, b) => `${a} of ${b} steps finished`,
+        finished: 'Finished',
+        took: d => ` in ${d}`,
+        tries: n => ` · took ${n} tries`
+      },
+      badge: {
+        usage_limit: f => (f.reset ? `Usage limit · reset ${f.reset}` : 'Usage limit'),
+        silent: f => `Stuck · silent ${f.silentFor}`,
+        time_limit: f => `Out of time · ${f.limit} limit`,
+        missing_skill: () => 'A skill is missing',
+        error: () => 'Stopped with an error',
+        asks_you: () => 'Asks for your decision',
+        review: () => 'Waiting for your review'
+      },
+      head: {
+        usage_limit: f => (f.resetPassed || !f.reset ? 'The limit has reset. Run it again?' : `Wait until ${f.reset}, then run it again.`),
+        silent: () => 'The agent got stuck. Still need this?',
+        time_limit: () => 'It ran out of time. Give it more?',
+        missing_skill: () => 'A skill it needs is missing.',
+        error: () => 'The agent stopped with an error. Try again?',
+        asks_you: () => 'The agent asks for your decision.',
+        review: () => 'The agent finished and asks for a review.'
+      },
+      why: {
+        usage_limit: f =>
+          `It worked for ${f.worked} and then hit the model’s usage limit. Hermes tried ${f.tries === 1 ? '1 more time' : `${f.tries} more times`}${f.reset ? ` before the limit reset at ${f.reset}` : ''}, and each try failed within a minute. It will not try again on its own.`,
+        silent: f => `It went silent ${f.into} in (last sign of life at ${f.lastLife}) and never came back. Hermes stopped it ${f.silentFor} later and will not try again on its own.`,
+        time_limit: f => `It worked for ${f.worked}, the full ${f.limit} it was allowed, and Hermes stopped it.`,
+        missing_skill: () => 'Hermes could not start it because a skill named in the task is not installed. Install the skill or remove it from the task, then run it again.',
+        error: f => `Hermes allows ${f.allowed === 1 ? '1 failure' : `${f.allowed} failures`} for this task, and that is used up. The agent’s own words are in the timeline below.`,
+        asks_you: () => 'It stopped and asked a question. The question is below, in its own words.',
+        review: () => 'Hermes Kanban handles reviews. Open it there to approve or ask for changes.'
+      },
+      kids: n => (n ? (n === 1 ? '1 step after it cannot start until this one is done.' : `${n} steps after it cannot start until this one is done.`) : 'No other step waits for it.'),
+      asked: q => `You asked: ${q}`,
+      question: 'The agent’s question, in its own words',
       tl: {
-        title: 'Timeline',
-        sub: 'every attempt · idle stretches squeezed, working time at true length',
-        task: 'Task',
-        spent: 'Spent',
-        other: 'Other tasks',
-        group: (n, money) => `${n === 1 ? '1 task' : `${n} tasks`} · ${money}`,
-        roles: 'Roles:'
-      },
-      role: { builder: 'Builder', review: 'Reviewer', gate: 'Gate', detective: 'Investigator' },
-      status: {
-        blocked: 'Needs you',
-        running: 'Working',
-        todo: 'To do',
-        ready: 'Ready',
-        triage: 'Triage',
-        scheduled: 'Scheduled',
-        review: 'In review',
-        done: 'Done',
-        archived: 'Archived',
-        other: 'Other'
-      },
-      run: {
-        ok: 'finished',
-        stopped: 'stopped',
-        outcome: o => `Hermes recorded: ${o}`,
-        paused: 'paused for input',
-        running: 'running',
-        attempt: n => `Attempt ${n}`,
-        took: d => `took ${d}`,
-        limitHit: d => `Stopped by its time limit (${d}).`,
-        pastLimit: (d, o) => `Ran past its time limit (${d}); Hermes recorded the end as ${o}, not as a time-out.`
-      },
-      cost: { estimated: 'estimated', actual: 'billed', mixed: 'partly estimated', none: 'no cost recorded' },
-      dr: {
-        pick: 'Pick a task to see its details.',
-        spent: 'Spent',
-        work: 'Working time',
-        attempts: 'Attempts',
-        comments: 'Comments',
-        assignee: 'Assignee',
-        role: 'Role',
-        limit: 'Time limit',
-        retries: 'Retries used',
-        created: 'Created',
-        waits: 'Waits for',
-        unlocks: 'Unlocks',
-        nothing: 'nothing',
-        activity: 'Now',
-        why: 'Why it needs you',
-        error: 'Last error',
-        raw: 'Error as stored',
-        noRuns: 'Not started yet.',
-        noLimit: 'none set',
-        close: 'Close details',
-        note: 'Note for the next worker',
-        notePh: 'Add a note…',
-        log: 'Worker log',
-        logLoading: 'Reading the log…',
-        logNone: 'No log: this task never started a worker.',
-        logEmpty: 'The log is empty.',
-        logClose: 'Hide log',
-        logTrunc: 'Showing the end of the log.',
-        logFailed: m => `The log could not be read: ${m}`
+        createdYou: 'You created this task.',
+        createdTask: 'Another task created it.',
+        waitFor: p => `Waiting for “${p}” to finish first.`,
+        ready: 'The steps before it finished, so it was ready to start.',
+        started: 'An agent started working on it.',
+        restarted: n => `Hermes started it again (attempt ${n}).`,
+        rateLimited: d => `After ${d} of work the model’s usage limit ran out. Hermes paused it; this does not count as a failure.`,
+        quiet: 'Hermes noticed the agent had gone quiet and tried to stop it.',
+        crashLimit: (d, r) => `It stopped after ${d}: the usage limit was still in place (it resets at ${r}).`,
+        crashSkill: s => `It could not start: a skill it needs (“${s}”) is not installed.`,
+        crashDied: 'The agent’s program had stopped, so the attempt ended.',
+        crashError: d => `The agent’s program stopped with an error after ${d}.`,
+        timedOut: 'It ran past its time limit, so Hermes stopped it.',
+        gaveUp: n => `Hermes stopped trying: this task may fail only ${n === 1 ? '1 time' : `${n} times`}, and that is used up.`,
+        asked: 'The agent stopped and asked for your decision:',
+        noteYou: 'A note was added to the card.',
+        noteAgent: 'The agent left a note on the card.',
+        unblocked: 'It was sent back to the queue to run again.',
+        finished: 'Finished.',
+        removed: 'Removed from the board.',
+        lastLife: (a, b) => `Last sign of life from the agent, ${a} in. After this it stayed silent for ${b}.`,
+        limitRan: l => `Its time limit of ${l} ran out.`
       },
       act: {
-        retry: 'Retry with more time',
-        log: 'Open log',
+        again: 'Run again',
+        againTitle: 'Starts a new attempt from the beginning',
+        more: 'Run with more time',
+        moreTitle: 'Starts a copy of this task with a longer time limit',
+        reply: 'Reply',
+        replyTitle: 'Answer the agent; it starts again and reads your answer',
+        remove: 'Remove',
+        removeTitle: 'Moves it to the archive. You can undo for 8 seconds.',
+        removeSure: 'Click again to remove',
         kanban: 'Open in Kanban',
-        chat: 'Ask in chat',
-        archive: 'Archive',
-        note: 'Add note'
+        check: 'Check',
+        checkTitle: 'Reads the record. Nothing is sent to the agent; it costs nothing.',
+        tell: 'Tell the agent',
+        tellTitle: 'Adds a note the agent reads at its next step',
+        send: 'Send',
+        cancel: 'Cancel',
+        hintAgain: 'starts a new attempt from the beginning',
+        hintMore: 'starts a copy with a longer time limit',
+        hintReply: 'saves your answer on the card and starts the agent again',
+        hintRemove: 'moves it to the archive · Undo for 8 seconds'
       },
-      chat: {
-        prompt: (id, title, board, status, reason) =>
-          `About Kanban task ${id} "${title}" on board ${board} (status: ${status}). ${reason} What should I do next?`,
-        inserted: 'The question is in the chat composer.',
-        copied: 'No chat composer answered, so the question was copied to the clipboard. Paste it into a chat.',
-        failed: 'Could not reach the chat composer or the clipboard.'
+      note: {
+        again: 'Anything the agent should do differently? (optional)',
+        reply: 'Your answer to the agent…',
+        tell: 'Tell the agent… e.g. “skip the docs, focus on the tests”',
+        goAgain: 'Run again',
+        goReply: 'Send and continue',
+        hintAgain: 'Your note is saved on the card first, then Hermes queues a new attempt.',
+        hintReply: 'Your answer is saved on the card; the agent starts again and reads it.',
+        hintTell: 'The agent reads it at its next step, without stopping.',
+        silent: d => `The agent has been silent for ${d} and may never read this.`
+      },
+      check: {
+        stuck: d => `No sign of life for ${d}. It is probably stuck. Wait for Hermes to stop it, or remove it.`,
+        last: (a, x) => `Last move ${a}: ${x}. `,
+        long: (d, m) => `Running longer than usual (${d}; this kind usually takes up to ${m} min).`,
+        ok: (d, a, b) => `On track: ${d} so far; this kind usually takes ${a}–${b} min.`,
+        plain: d => `${d} so far.`
+      },
+      toast: {
+        undo: 'Undo',
+        undone: 'Undone',
+        again: t => `“${t}” is queued to run again.`,
+        againNote: t => `“${t}” is queued to run again with your note.`,
+        replied: t => `Your answer was saved and “${t}” is queued again.`,
+        told: 'Sent. The agent sees it at its next step.',
+        removing: t => `Removing “${t}”…`,
+        removed: t => `“${t}” was moved to the archive.`,
+        failed: (what, m) => `${what} failed: ${m}`,
+        actAgain: 'Run again',
+        actTell: 'Tell the agent',
+        actRemove: 'Remove',
+        actMore: 'Run with more time',
+        actReply: 'Reply'
+      },
+      drag: {
+        working: 'An agent is working on this. Wait for it to finish.',
+        done: 'Only the agent marks work done. A gate finishes when you approve it.',
+        start: 'Work starts by itself when an agent is free. Drop on Queued to run it again.',
+        block: 'Only an agent can raise a block.',
+        reopen: 'Finished work cannot reopen. Create a follow-up task instead.',
+        none: 'Nothing to change there.'
+      },
+      det: {
+        task: 'Task',
+        move: 'J / K to move',
+        close: 'Close (Esc)',
+        step: (i, n, p) => `Step ${i} of ${n} in ${p}`,
+        whyStopped: 'Why it stopped',
+        live: 'Live',
+        waiting: 'Waiting',
+        readyWait: 'Ready. Starts when an agent is free.',
+        lastUpdate: a => `last update ${a}`,
+        how: 'How it went',
+        report: 'Agent’s report (in its own words)',
+        tech: 'Technical details',
+        facts: 'Facts',
+        agent: 'Agent',
+        created: 'Created',
+        limit: 'Time limit',
+        none: 'none',
+        retries: 'Retries',
+        dflt: 'board default',
+        cost: 'Cost',
+        estimated: ' (estimated from sessions)',
+        typical: r => `Typical ${r}`,
+        typicalVal: (m, usd, n) => `${m} min, ${usd} (median of ${n} finished runs)`,
+        noTypical: r => `no finished ${r} runs yet`,
+        attempts: n => `Attempts · ${n}`,
+        worked: d => `Worked for ${d}`,
+        workingFor: d => `Working for ${d}`,
+        noSummary: 'No summary was written.',
+        stillWorking: 'The agent is still working.',
+        noAttempts: 'No attempts yet.',
+        id: 'Task id',
+        loop: 'The loop',
+        round1: 'round 1',
+        rounds: n => `${n} rounds so far`,
+        mergedNode: 'Merged',
+        backNode: 'Sent back',
+        okNode: 'Your OK',
+        loopWhy: (s, x) => `${s} found a problem: ${x}`,
+        loopYou: x => `Checks passed, but it needed your call on ${x}. You asked for changes`,
+        loopYouPlain: 'Checks passed, but it needed your decision. You asked for changes',
+        toRound: n => ` → round ${n}`
+      },
+      out: {
+        completed: 'completed',
+        crashed: 'crashed',
+        timed_out: 'timed out',
+        blocked: 'blocked',
+        rate_limited: 'paused by the usage limit',
+        gave_up: 'gave up',
+        reclaimed: 'reclaimed',
+        running: 'running',
+        other: 'ended'
+      },
+      list: {
+        needs: 'needs you',
+        working: 'working',
+        queued: 'queued',
+        shipped: a => `shipped ${a}`,
+        tasks: n => `${n} tasks`,
+        runs: n => (n === 1 ? '1 run' : `${n} runs`),
+        done: 'done',
+        finished: a => `finished ${a}`
+      },
+      inbox: {
+        needs: 'Needs you',
+        since: 'Since you last looked',
+        shipped: p => `${p} shipped`,
+        allDone: n => `All ${n} tasks done`,
+        crashed: t => `${t} crashed, retried`,
+        endedAs: o => `The run ended as ${o}`,
+        clear: 'All clear',
+        clearSub: 'Nothing is waiting for you.'
+      },
+      feed: {
+        started: ' started',
+        finished: d => ` finished in ${d}`,
+        approval: ' asks for your approval',
+        blocked: ' is blocked',
+        ended: (o, d) => ` ${o} after ${d}`,
+        needs: 'Needs you: '
+      },
+      replay: {
+        range24: '24 h',
+        range3: '3 days',
+        range7: '7 days',
+        rangeAll: 'All',
+        s10: '10 min/s',
+        s30: '30 min/s',
+        s2h: '2 h/s',
+        play: 'Play / pause (Space)'
+      },
+      pal: {
+        placeholder: 'Type a command or search tasks on every board…',
+        selected: s => `Selected: ${s}`,
+        tasks: 'Tasks',
+        boards: 'Boards',
+        commands: 'Commands',
+        goBoard: 'Go to Board',
+        goList: 'Go to List',
+        goInbox: 'Go to Inbox',
+        replay: 'Replay this board',
+        live: 'Go live',
+        help: 'Show keyboard shortcuts',
+        rail: 'Toggle sidebar',
+        open: s => `Open “${s}”`,
+        again: s => `Run “${s}” again`,
+        remove: s => `Remove “${s}”`,
+        board: s => `Switch to ${s}`,
+        catView: 'View',
+        catTime: 'Time',
+        catHelp: 'Help',
+        catAction: 'Action',
+        catBoard: 'Board'
+      },
+      keys: {
+        title: 'Keyboard',
+        search: 'Search everything',
+        filter: 'Filter cards',
+        move: 'Move selection',
+        open: 'Open selected',
+        close: 'Close / exit replay',
+        again: 'Run selected again',
+        undo: 'Undo',
+        views: 'Board · List · Inbox',
+        replay: 'Replay',
+        play: 'Play / pause replay',
+        rail: 'Toggle sidebar',
+        help: 'This help'
+      },
+      log: {
+        title: 'Worker log',
+        open: 'Open log',
+        hide: 'Hide log',
+        loading: 'Reading the log…',
+        none: 'No log: this task never started a worker.',
+        empty: 'The log is empty.',
+        trunc: 'Showing the end of the log.',
+        failed: m => `The log could not be read: ${m}`
       },
       dlg: {
         cancel: 'Cancel',
         close: 'Close',
-        retryTitle: 'Retry with more time',
+        retryTitle: 'Run with more time',
         retryWhy: "Hermes cannot change an existing task's time limit, so a new task is used: Wingline creates it and retires this one.",
         limit: 'New time limit (hours)',
         limitOld: d => `Old limit: ${d}. The default is twice the old one, rounded to 30 minutes.`,
@@ -161,120 +395,33 @@ const BUNDLES = {
         stepUnlink: (o, c) => `Remove the old link ${o} → ${c}.`,
         stepComment: o => `Add a comment on ${o} naming the new task's id.`,
         stepArchive: o => `Archive ${o}.`,
-        noChildren: 'No children to re-link: no task waits for this one.',
-        newId: id => `New task: ${id}`,
         state: { pending: 'Not done', running: 'Working…', done: 'Done', failed: 'Failed' },
         retryOk: id => `Done. The new task is ${id}; the old one is archived.`,
         stoppedAt: 'Stopped at the first failure. Steps marked Done already happened on the board; nothing after the failed step ran.',
-        retryComment: (id, d) => `Wingline retried this task as ${id} with a time limit of ${d}; this task is archived.`,
-        noteTitle: 'Add a note',
-        noteWill: id => `Adds this comment to ${id}, signed "wingline". The next worker on the task reads it.`,
-        noteEmpty: 'Write a note first.',
-        noteOk: 'The note was added.',
-        archiveTitle: 'Archive this task?',
-        archiveWill: id =>
-          `${id} moves to the archived status. It stays readable under archived and can be found again with Kanban's archived filter; nothing is deleted.`,
-        archiveNext: 'Continue',
-        archiveSure: 'Yes, archive it',
-        archiveSecond: 'Second step: confirm once more to archive.',
-        archiveOk: 'The task was archived.',
-        failed: m => `Failed: ${m}`
-      },
-      fx: {
-        aria: 'Production line: tasks as packages moving through machines',
-        live: 'Live',
-        replay: s => `Replay · ${s}×`,
-        paused: 'Replay · paused',
-        idle: 'Line idle — nothing running right now',
-        running: n => (n === 1 ? '1 machine running' : `${n} machines running`),
-        working: n => `${n} working`,
-        play: 'Play replay',
-        pause: 'Pause replay',
-        now: 'Now',
-        nowTip: 'Jump to the live state',
-        speed: 'Replay speed',
-        scrub: 'Replay position',
-        zone: {
-          intake: 'INTAKE',
-          build: 'BUILD',
-          review: 'REVIEW · 4 SCANNERS',
-          merge: 'MERGE → GATE',
-          shipped: 'SHIPPED',
-          archived: 'ARCHIVED',
-          investigate: 'INVESTIGATE'
-        },
-        machine: { pressA: 'Press A', pressB: 'Press B', scan: n => `Scanner ${n}`, gate: 'Gate stamp', lab: 'Detective lab' },
-        jam: 'Jammed — needs you',
-        pause: 'Paused — needs input',
-        bin: n => `NEEDS YOU · ${n}`,
-        clear: 'All clear — nothing waiting on you',
-        queueEmpty: 'Queue empty',
-        none: 'none',
-        crates: n => (n === 1 ? '1 crate' : `${n} crates`),
-        shipped: 'shipped · their cost',
-        inputs: (a, b) => `${a}/${b} inputs`,
-        callLimit: 'STOPPED · TIME LIMIT',
-        callCrash: 'STOPPED · CRASHED',
-        callStop: 'STOPPED',
-        callPause: 'PAUSED · WAITING FOR INPUT',
-        callMeta: (d, n, money) => `${d} worked · ${n === 1 ? '1 attempt' : `${n} attempts`} · ${money}`,
-        decide: 'Click to decide →',
-        more: n => `+${n}`,
-        where: {
-          intake: 'queued',
-          wait: 'queued, waiting for its inputs',
-          machine: m => `working at ${m}`,
-          crash: 'stopped — needs you',
-          pause: 'paused — needs input',
-          dock: 'shipped (done)',
-          scrap: 'archived'
-        },
-        pkg: (title, where) => `${title} — ${where}`,
-        mIdle: m => `${m}: idle`,
-        mWork: (m, x) => `${m}: working on ${x}`,
-        mJam: (m, x) => `${m}: stopped on ${x}`,
-        noTask: m => `${m} has not processed a task yet at this point.`,
-        replayAt: s => `In replay at ${s}`
-      },
-      err: {
-        noBridge: 'The Hermes desktop bridge is not available, so Wingline cannot reach the Kanban API.',
-        noRest: 'The plugin REST door is not available.',
-        shape: 'The board answer did not contain a task list.',
-        noId: 'Hermes did not return the new task id.',
-        refused: 'Hermes answered but did not make the change.'
+        retryComment: (id, d) => `Wingline retried this task as ${id} with a time limit of ${d}; this task is archived.`
       }
     }
   }
 }
 
-function h(type, props, ...kids) {
-  const { key, ...rest } = props || {}
-  if (!kids.length) return jsx(type, rest, key)
-  if (kids.length === 1) return jsx(type, { ...rest, children: kids[0] }, key)
-  return jsxs(type, { ...rest, children: kids }, key)
-}
-
 const isNum = v => typeof v === 'number' && Number.isFinite(v)
 const enc = encodeURIComponent
-const money = v => `$${(isNum(v) ? v : 0).toFixed(2)}`
-const roleOf = task => (ROLES.includes(task?.role) ? task.role : 'builder')
-const runsOf = task => (Array.isArray(task?.runs) ? task.runs.filter(r => r && isNum(r.started_at)) : [])
-const runEnd = (r, now) => (isNum(r.ended_at) ? r.ended_at : now)
-const workSeconds = (task, now) => runsOf(task).reduce((s, r) => s + Math.max(0, runEnd(r, now) - r.started_at), 0)
-const lastRun = task => {
-  const rs = runsOf(task)
-  return rs.length ? rs[rs.length - 1] : null
-}
+const pad = n => String(n).padStart(2, '0')
 const errText = err => String(err?.message || err || '')
-const statusKey = s => (STATUS_KEYS.includes(s) ? s : 'other')
-
-function runKind(r) {
-  if (!isNum(r?.ended_at)) return 'running'
-  const o = String(r.outcome || r.status || '')
-  if (OK_OUTCOMES.includes(o)) return 'ok'
-  if (PAUSE_OUTCOMES.includes(o)) return 'paused'
-  return 'stopped'
+const usd = v => `$${isNum(v) ? (v >= 100 ? v.toFixed(0) : v.toFixed(2)) : '0.00'}`
+const hm = (ts, sec) => {
+  const d = new Date(ts * 1000)
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}${sec ? `:${pad(d.getSeconds())}` : ''}`
 }
+const hue = p => {
+  let x = 0
+  for (const c of String(p)) x = (x * 31 + c.charCodeAt(0)) >>> 0
+  return HUES[x % HUES.length]
+}
+const roundOf = pipe => String(pipe || '').match(/^(\S+) r(\d+)$/)
+const verdictBad = s => /VERDICT:\s*CHANGES/.test(s || '')
+const lastSum = x => x.runs[x.runs.length - 1]?.sum || ''
+const attr = v => String(v).replace(/["\\]/g, '\\$&')
 
 function stripAnsi(s) {
   return String(s ?? '')
@@ -284,29 +431,45 @@ function stripAnsi(s) {
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
 }
 
-function fmtDur(t, s) {
-  if (!isNum(s) || s < 0) return '—'
-  if (s < 90) return t('wingline.unit.s', Math.round(s))
-  if (s < 5400) return t('wingline.unit.min', Math.round(s / 60))
-  const m = Math.round(s / 60)
-  return t('wingline.unit.hm', Math.floor(m / 60), m % 60)
+function el(tag, props, ...kids) {
+  const e = document.createElement(tag)
+  if (props) {
+    for (const k in props) {
+      const v = props[k]
+      if (v == null || v === false) continue
+      if (k === 'class') e.className = v
+      else if (k === 'style') e.style.cssText = v
+      else if (k.startsWith('on')) e.addEventListener(k.slice(2), v)
+      else if (k.startsWith('__')) e[k] = v
+      else e.setAttribute(k, v === true ? '' : v)
+    }
+  }
+  for (const c of kids.flat(9)) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(String(c)))
+  return e
 }
 
-function fmtWhen(sec) {
-  if (!isNum(sec)) return '—'
-  const d = new Date(sec * 1000)
-  const day = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-  return `${day} ${time}`
+const add = (node, ...k) => node.append(...k.flat(9).filter(x => x != null && x !== false))
+
+function icon(name, w = 14) {
+  const s = document.createElementNS(SVG_NS, 'svg')
+  for (const [k, v] of Object.entries({ width: w, height: w, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) s.setAttribute(k, v)
+  for (const [tag, attrs] of ICONS[name] || []) {
+    const n = document.createElementNS(SVG_NS, tag)
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v)
+    s.append(n)
+  }
+  return s
 }
 
-function fmtClock(sec) {
-  if (!isNum(sec)) return ['—', '--:--']
-  const d = new Date(sec * 1000)
-  return [
-    d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }),
-    d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-  ]
+const animate = (node, frames, opts) => (typeof node.animate === 'function' ? node.animate(frames, opts) : null)
+
+async function kanbanCall(path, board, opts = {}) {
+  const api = typeof window !== 'undefined' ? window.hermesDesktop?.api : null
+  if (typeof api !== 'function') throw new Error(BUNDLES.en.wingline.err.noBridge)
+  const sep = path.includes('?') ? '&' : '?'
+  const request = { path: `${KANBAN}${path}${board ? `${sep}board=${enc(board)}` : ''}`, method: opts.method || 'GET' }
+  if (opts.body !== undefined) request.body = opts.body
+  return api(request)
 }
 
 function readStore(key, fallback) {
@@ -326,1506 +489,6 @@ function writeStore(key, value) {
   }
 }
 
-async function kanbanCall(path, board, opts = {}) {
-  const api = typeof window !== 'undefined' ? window.hermesDesktop?.api : null
-  if (typeof api !== 'function') throw new Error(BUNDLES.en.wingline.err.noBridge)
-  const sep = path.includes('?') ? '&' : '?'
-  const request = { path: `${KANBAN}${path}${board ? `${sep}board=${enc(board)}` : ''}`, method: opts.method || 'GET' }
-  if (opts.body !== undefined) request.body = opts.body
-  return api(request)
-}
-
-function buildAxis(tasks, now) {
-  const spans = []
-  const pts = new Set()
-  for (const task of tasks) {
-    if (isNum(task.created_at)) pts.add(task.created_at)
-    for (const r of runsOf(task)) {
-      const e = runEnd(r, now)
-      spans.push([r.started_at, e])
-      pts.add(r.started_at)
-      pts.add(e)
-    }
-  }
-  const p = [...pts].sort((a, b) => a - b)
-  if (p.length < 2) {
-    const a = p.length ? p[0] : now
-    p.splice(0, p.length, a - 60, a)
-  }
-  const w = [0]
-  for (let i = 1; i < p.length; i++) {
-    const d = p[i] - p[i - 1]
-    const busy = spans.some(([a, b]) => a <= p[i - 1] && b >= p[i])
-    w.push(busy ? d : Math.min(d, GAP))
-  }
-  const cum = [0]
-  for (let i = 1; i < p.length; i++) cum.push(cum[i - 1] + w[i])
-  const span = cum[cum.length - 1] || 1
-  const toC = x => {
-    if (x <= p[0]) return 0
-    for (let i = 1; i < p.length; i++) {
-      if (x <= p[i]) {
-        const d = p[i] - p[i - 1]
-        return cum[i - 1] + (d ? (x - p[i - 1]) / d : 0) * w[i]
-      }
-    }
-    return span
-  }
-  const toR = c => {
-    for (let i = 1; i < p.length; i++) {
-      if (c <= cum[i]) {
-        const s = cum[i] - cum[i - 1]
-        return p[i - 1] + (s ? (c - cum[i - 1]) / s : 0) * (p[i] - p[i - 1])
-      }
-    }
-    return p[p.length - 1]
-  }
-  return { start: p[0], end: p[p.length - 1], span, toC, toR }
-}
-
-function components(tasks) {
-  const ids = new Set(tasks.map(x => x.id))
-  const up = new Map(tasks.map(x => [x.id, x.id]))
-  const find = a => {
-    while (up.get(a) !== a) {
-      up.set(a, up.get(up.get(a)))
-      a = up.get(a)
-    }
-    return a
-  }
-  const join = (a, b) => {
-    const ra = find(a)
-    const rb = find(b)
-    if (ra !== rb) up.set(ra, rb)
-  }
-  for (const x of tasks) {
-    for (const p of x.parents || []) if (ids.has(p)) join(x.id, p)
-    for (const c of x.children || []) if (ids.has(c)) join(x.id, c)
-  }
-  const out = new Map()
-  for (const x of tasks) {
-    const r = find(x.id)
-    if (!out.has(r)) out.set(r, [])
-    out.get(r).push(x)
-  }
-  return [...out.values()]
-}
-
-function commonPrefix(titles) {
-  if (!titles.length) return ''
-  const split = titles.map(s => String(s || '').split(' '))
-  const out = []
-  for (let i = 0; i < split[0].length; i++) {
-    const word = split[0][i]
-    if (split.some(p => p[i] !== word)) break
-    out.push(word)
-  }
-  return out.join(' ').replace(/[:\s]+$/, '')
-}
-
-const firstStart = task => {
-  const r = runsOf(task)[0]
-  return r ? r.started_at : isNum(task.created_at) ? task.created_at : 0
-}
-
-function timelineGroups(tasks, t) {
-  const comps = components(tasks)
-  const groups = []
-  const singles = []
-  for (const c of comps) {
-    if (c.length > 1) groups.push({ name: commonPrefix(c.map(x => x.title)) || c[0].title, tasks: c })
-    else singles.push(c[0])
-  }
-  const byWord = new Map()
-  for (const x of singles) {
-    const word = String(x.title || '').split(' ')[0].toLowerCase()
-    if (!byWord.has(word)) byWord.set(word, [])
-    byWord.get(word).push(x)
-  }
-  const rest = []
-  for (const [word, list] of byWord) {
-    if (list.length > 1 && word) groups.push({ name: commonPrefix(list.map(x => x.title)) || word, tasks: list })
-    else rest.push(...list)
-  }
-  if (rest.length) groups.push({ name: t('wingline.tl.other'), tasks: rest, other: true })
-  for (const g of groups) g.tasks.sort((a, b) => firstStart(a) - firstStart(b))
-  groups.sort((a, b) => (a.other ? 1 : 0) - (b.other ? 1 : 0) || firstStart(a.tasks[0]) - firstStart(b.tasks[0]))
-  return groups
-}
-
-const NODE = { w: 200, h: 52, gx: 110, gy: 10, pad: 16, gap: 26 }
-
-function pipelineLayout(tasks) {
-  const byId = new Map(tasks.map(x => [x.id, x]))
-  const comps = components(tasks).filter(c => c.length > 1)
-  const nodes = []
-  const edges = []
-  let top = NODE.pad
-  let width = 0
-  for (const comp of comps) {
-    const depth = new Map()
-    const visiting = new Set()
-    const depthOf = x => {
-      if (depth.has(x.id)) return depth.get(x.id)
-      if (visiting.has(x.id)) return 0
-      visiting.add(x.id)
-      const ps = (x.parents || []).map(p => byId.get(p)).filter(Boolean)
-      const d = ps.length ? Math.max(...ps.map(depthOf)) + 1 : 0
-      visiting.delete(x.id)
-      depth.set(x.id, d)
-      return d
-    }
-    comp.forEach(depthOf)
-    const cols = []
-    for (const x of [...comp].sort((a, b) => firstStart(a) - firstStart(b))) {
-      const d = depth.get(x.id)
-      if (!cols[d]) cols[d] = []
-      cols[d].push(x)
-    }
-    const prefix = commonPrefix(comp.map(x => x.title))
-    const rows = Math.max(...cols.map(c => (c ? c.length : 0)))
-    const compH = rows * NODE.h + (rows - 1) * NODE.gy
-    cols.forEach((col, d) => {
-      if (!col) return
-      const colH = col.length * NODE.h + (col.length - 1) * NODE.gy
-      col.forEach((x, k) => {
-        const label = prefix && String(x.title).length > prefix.length + 1 ? String(x.title).slice(prefix.length).trim() : x.title
-        nodes.push({ task: x, label, x: NODE.pad + d * (NODE.w + NODE.gx), y: top + (compH - colH) / 2 + k * (NODE.h + NODE.gy) })
-      })
-      width = Math.max(width, NODE.pad * 2 + (d + 1) * NODE.w + d * NODE.gx)
-    })
-    top += compH + NODE.gap
-  }
-  const at = new Map(nodes.map(n => [n.task.id, n]))
-  for (const n of nodes) {
-    for (const p of n.task.parents || []) {
-      const from = at.get(p)
-      if (from) edges.push({ key: `${p}>${n.task.id}`, from, to: n })
-    }
-  }
-  return { nodes, edges, width, height: top - NODE.gap + NODE.pad }
-}
-
-const LANES = [300, 400, 500, 600]
-const MACHINES = [
-  { key: 'pressA', kind: 'press', role: 'builder', x: 430, y: 230, w: 108, h: 116 },
-  { key: 'pressB', kind: 'press', role: 'builder', x: 430, y: 410, w: 108, h: 116 },
-  ...LANES.map((y, i) => ({ key: `scan${i + 1}`, kind: 'scan', role: 'review', x: 820, y, w: 70, h: 76, n: i + 1 })),
-  { key: 'gate', kind: 'gate', role: 'gate', x: 1085, y: 450, w: 120, h: 124 },
-  { key: 'lab', kind: 'lab', role: 'detective', x: 478, y: 770, w: 132, h: 96 }
-]
-const POOL = { builder: ['pressA', 'pressB'], review: ['scan1', 'scan2', 'scan3', 'scan4'], gate: ['gate'], detective: ['lab'] }
-const BELTS = [
-  [[226, 450], [290, 450]],
-  [[290, 450], [290, 230], [540, 230], [540, 130], [1500, 130], [1500, 205]],
-  [[290, 410], [540, 410], [540, 230]],
-  [[290, 450], [290, 680], [670, 680], [670, 300]],
-  [[290, 680], [290, 770], [420, 770]],
-  ...LANES.map(y => [[670, y], [1000, y]]),
-  [[1000, 300], [1000, 450]],
-  [[1000, 600], [1000, 450]],
-  [[1000, 450], [1290, 450]]
-]
-const RED_BELT = [[548, 770], [1110, 770]]
-const CABLES = ['M486,262 C590,262 620,300 662,300', 'M486,440 C600,440 640,470 662,470']
-const ZONE = {
-  intake: { x: 40, y: 300, w: 186, h: 300 },
-  dock: { x: 1290, y: 190, w: 272, h: 376 },
-  bay: { x: 1110, y: 612, w: 452, h: 200 },
-  scrap: { x: 48, y: 676, w: 166, h: 140 }
-}
-const CAP = { intake: 10, dock: 42, bay: 4, scrap: 12 }
-const ptsAttr = list => list.map(p => p.join(',')).join(' ')
-
-function archivedAt(task) {
-  const r = lastRun(task)
-  if (r) return runEnd(r, r.started_at) + 600
-  return isNum(task.created_at) ? task.created_at : 0
-}
-
-function zoneAt(task, T) {
-  if (T == null) {
-    const s = task.status
-    if (s === 'running') return 'machine'
-    if (s === 'blocked') return 'bay'
-    if (s === 'done') return 'dock'
-    if (s === 'archived') return 'scrap'
-    return 'intake'
-  }
-  const runs = runsOf(task)
-  const born = isNum(task.created_at) ? task.created_at : runs.length ? runs[0].started_at : null
-  if (born == null || born > T) return 'hidden'
-  if (task.status === 'archived' && T >= archivedAt(task)) return 'scrap'
-  const started = runs.filter(r => r.started_at <= T)
-  if (started.some(r => !isNum(r.ended_at) || r.ended_at > T)) return 'machine'
-  if (task.status === 'done' && isNum(task.completed_at) && T >= task.completed_at) return 'dock'
-  const last = started[started.length - 1]
-  if (!last) return 'intake'
-  return runKind(last) === 'ok' ? 'dock' : 'bay'
-}
-
-function jamKind(task, T) {
-  const runs = runsOf(task).filter(r => isNum(r.ended_at) && (T == null || r.ended_at <= T))
-  const last = runs[runs.length - 1]
-  return last && runKind(last) === 'stopped' ? 'crash' : 'pause'
-}
-
-function slot(zone, i) {
-  if (zone === 'intake') return [86 + (i % 2) * 64, 372 + Math.floor(i / 2) * 48]
-  if (zone === 'dock') return [1322 + (i % 6) * 41 + (Math.floor(i / 6) % 2) * 10, 530 - Math.floor(i / 6) * 46]
-  if (zone === 'bay') return [1168 + i * 76, 742]
-  return [96 + (i % 3) * 38, 778 - Math.floor(i / 3) * 12]
-}
-
-function layoutFactory(tasks, T) {
-  const zones = { intake: [], machine: [], bay: [], dock: [], scrap: [] }
-  const zoneOf = {}
-  for (const task of tasks) {
-    const z = zoneAt(task, T)
-    zoneOf[task.id] = z
-    if (z !== 'hidden') zones[z].push(task)
-  }
-  const endOf = x => {
-    const r = lastRun(x)
-    return r ? runEnd(r, r.started_at) : isNum(x.created_at) ? x.created_at : 0
-  }
-  zones.intake.sort((a, b) => (a.created_at || 0) - (b.created_at || 0))
-  zones.machine.sort((a, b) => firstStart(a) - firstStart(b))
-  zones.bay.sort((a, b) => endOf(a) - endOf(b))
-  zones.dock.sort((a, b) => endOf(a) - endOf(b))
-  zones.scrap.sort((a, b) => endOf(a) - endOf(b))
-  const occ = {}
-  const pos = {}
-  const kinds = {}
-  for (const task of zones.machine) {
-    const pool = POOL[roleOf(task)]
-    const free = pool.find(k => !occ[k])
-    const key = free || pool[pool.length - 1]
-    if (!occ[key]) occ[key] = { task, state: 'work', extra: [] }
-    else occ[key].extra.push(task)
-    const m = MACHINES.find(x => x.key === key)
-    const k = free ? 0 : occ[key].extra.length
-    pos[task.id] = [m.x + k * 14, m.y - k * 6]
-  }
-  for (const task of zones.bay) {
-    const kind = jamKind(task, T)
-    kinds[task.id] = kind
-    const pool = POOL[roleOf(task)]
-    const free = pool.find(k => !occ[k])
-    if (free) occ[free] = { task, state: kind, extra: [] }
-  }
-  const overflow = {}
-  for (const z of ['intake', 'dock', 'bay', 'scrap']) {
-    zones[z].forEach((task, i) => {
-      if (i < CAP[z]) pos[task.id] = slot(z, i)
-    })
-    overflow[z] = Math.max(0, zones[z].length - CAP[z])
-  }
-  return { zones, zoneOf, occ, pos, kinds, overflow }
-}
-
-const ICONS = {
-  clock: ['M12 7v5l3 2', 'C12,12,9'],
-  alert: ['M10.3 3.9 2.4 17.6A2 2 0 0 0 4.1 20.6h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', 'M12 9v4M12 17h.01'],
-  retry: ['M3 12a9 9 0 0 1 15.5-6.2L21 8', 'M21 3v5h-5', 'M21 12a9 9 0 0 1-15.5 6.2L3 16', 'M3 21v-5h5'],
-  log: ['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z', 'M14 3v5h5M9 13h6M9 17h4'],
-  chat: ['M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z'],
-  archive: ['M3 4h18v4H3z', 'M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4'],
-  coin: ['M15 9.5c-.5-1-1.6-1.5-3-1.5-1.7 0-3 .9-3 2s1.3 1.7 3 2 3 .9 3 2-1.3 2-3 2c-1.4 0-2.5-.5-3-1.5M12 6v2M12 16v2', 'C12,12,9'],
-  board: ['M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v13h-4z'],
-  moon: ['M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z'],
-  info: ['M12 11v5M12 8h.01', 'C12,12,9'],
-  note: ['M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z'],
-  user: ['M20 21a8 8 0 0 0-16 0', 'C12,8,4'],
-  play: ['M7 5v14l11-7z'],
-  pause: ['M8 5v14M16 5v14'],
-  close: ['M6 6l12 12M18 6 6 18']
-}
-
-function Icon({ name, size = 15 }) {
-  const parts = ICONS[name] || []
-  return h(
-    'svg',
-    { className: 'wl-i', width: size, height: size, viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false' },
-    parts.map((d, i) => {
-      if (d.startsWith('C')) {
-        const [cx, cy, r] = d.slice(1).split(',').map(Number)
-        return h('circle', { key: i, cx, cy, r })
-      }
-      return h('path', { key: i, d })
-    })
-  )
-}
-
-function Btn({ icon, label, onClick, kind, disabled, id }) {
-  return h(
-    'button',
-    { type: 'button', className: `wl-btn${kind ? ` is-${kind}` : ''}`, onClick, disabled, 'data-act': id },
-    icon ? h(Icon, { name: icon }) : null,
-    h('span', null, label)
-  )
-}
-
-const CSS = `
-.wl-root{container:wl/inline-size;position:relative;min-height:100%;box-sizing:border-box;padding:0 0 28px;color:var(--ui-text-primary);background:var(--ui-bg-chrome);font-size:13px;line-height:1.5}
-.wl-root *{box-sizing:border-box}
-.wl-root button{font:inherit;color:inherit;cursor:pointer}
-.wl-root :focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px;border-radius:6px}
-.wl-i{flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
-.wl-num{font-variant-numeric:tabular-nums}
-.wl-top{position:sticky;top:0;z-index:6;display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:12px 20px;background:var(--ui-bg-chrome);border-bottom:1px solid var(--ui-stroke-tertiary)}
-.wl-brand{display:flex;flex-direction:column;min-width:0}
-.wl-brand h1{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
-.wl-brand span{font-size:12px;color:var(--ui-text-tertiary)}
-.wl-select{height:30px;max-width:220px;padding:0 8px;border-radius:8px;border:1px solid var(--ui-stroke-secondary);background:var(--ui-bg-editor);color:var(--ui-text-primary);font:inherit}
-.wl-seg{display:inline-flex;gap:2px;padding:3px;background:var(--ui-bg-secondary);border:1px solid var(--ui-stroke-tertiary);border-radius:10px}
-.wl-seg button{border:0;background:none;padding:4px 12px;border-radius:7px;color:var(--ui-text-secondary);font-weight:500}
-.wl-seg button:hover{color:var(--ui-text-primary)}
-.wl-seg button[aria-pressed=true]{background:var(--ui-bg-elevated);color:var(--ui-text-primary)}
-.wl-counts{display:flex;flex-wrap:wrap;gap:4px;margin-left:auto}
-.wl-count{display:inline-flex;align-items:center;gap:7px;padding:4px 10px;border-radius:9px;border:1px solid transparent;background:none;color:var(--ui-text-secondary);font-size:12.5px}
-.wl-count b{color:var(--ui-text-primary);font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
-.wl-count:hover{background:var(--ui-bg-secondary);border-color:var(--ui-stroke-tertiary)}
-.wl-count[aria-pressed=true]{background:var(--ui-bg-secondary);border-color:var(--ui-stroke-secondary)}
-.wl-count.is-alert{border-color:color-mix(in srgb,var(--ui-yellow) 45%,transparent);background:color-mix(in srgb,var(--ui-yellow) 9%,transparent)}
-.wl-count .wl-dot{width:8px;height:8px;border-radius:50%}
-.wl-count.is-static{cursor:default}
-.wl-count.is-static:hover{background:none;border-color:transparent}
-.wl-updated{font-size:11.5px;color:var(--ui-text-tertiary);white-space:nowrap}
-.wl-problems{margin:12px 20px 0;padding:10px 14px;border-radius:10px;border:1px solid color-mix(in srgb,var(--ui-red) 45%,transparent);background:color-mix(in srgb,var(--ui-red) 8%,var(--ui-bg-chrome));max-height:${BOX.problems}px;overflow:auto}
-.wl-problems-head{display:flex;align-items:center;gap:10px;font-weight:600}
-.wl-problems-head .wl-i{stroke:var(--ui-red)}
-.wl-problems ul{margin:6px 0 0;padding-left:24px;font-size:12.5px;color:var(--ui-text-secondary)}
-.wl-problems li{overflow-wrap:anywhere}
-.wl-problems li b{color:var(--ui-text-primary);font-weight:600}
-.wl-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:9px;background:var(--ui-bg-tertiary);border:1px solid var(--ui-stroke-secondary);color:var(--ui-text-primary);font-size:12.5px;font-weight:500;white-space:nowrap}
-.wl-btn:hover{background:var(--ui-control-hover-background)}
-.wl-btn.is-primary{background:var(--ui-text-primary);border-color:var(--ui-text-primary);color:var(--ui-bg-chrome)}
-.wl-btn.is-primary:hover{opacity:.9;background:var(--ui-text-primary)}
-.wl-btn.is-danger{background:var(--ui-red);border-color:var(--ui-red);color:var(--ui-bg-chrome)}
-.wl-btn.is-ghost{background:none;border-color:transparent;color:var(--ui-text-secondary)}
-.wl-btn.is-ghost:hover{background:var(--ui-bg-tertiary);color:var(--ui-text-primary)}
-.wl-btn[disabled]{opacity:.45;cursor:default}
-.wl-state{display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin:24px 20px;padding:18px 20px;border-radius:12px;border:1px solid var(--ui-stroke-tertiary);background:var(--ui-bg-secondary);color:var(--ui-text-secondary)}
-.wl-board{display:grid;grid-template-columns:minmax(0,1fr);gap:20px;padding:20px}
-@container wl (min-width:1040px){.wl-board{grid-template-columns:minmax(0,1fr) 360px}}
-.wl-main{min-width:0;display:flex;flex-direction:column;gap:26px}
-.wl-h2{margin:0 0 10px;font-size:14px;font-weight:600;display:flex;align-items:baseline;gap:10px;letter-spacing:-.01em}
-.wl-h2 small{font-weight:400;color:var(--ui-text-tertiary);font-size:12px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wl-panel{background:var(--ui-bg-secondary);border:1px solid var(--ui-stroke-tertiary);border-radius:12px;min-width:0}
-.wl-needs{display:flex;flex-direction:column;gap:10px;max-height:${BOX.needs}px;overflow:auto}
-.wl-attn{flex:none;display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;padding:16px 18px;cursor:pointer;border-color:color-mix(in srgb,var(--ui-yellow) 40%,var(--ui-stroke-tertiary));background:linear-gradient(180deg,color-mix(in srgb,var(--ui-yellow) 9%,transparent),transparent 70%),var(--ui-bg-secondary)}
-.wl-attn.is-sel{border-color:var(--ui-yellow)}
-.wl-badge{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:color-mix(in srgb,var(--ui-yellow) 14%,transparent);border:1px solid color-mix(in srgb,var(--ui-yellow) 40%,transparent)}
-.wl-badge .wl-i{stroke:var(--ui-yellow)}
-.wl-attn h3{margin:0;font-size:15px;font-weight:600;line-height:1.35;overflow-wrap:anywhere}
-.wl-reason{margin:6px 0 0;max-width:80ch;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow-wrap:anywhere}
-.wl-facts{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:10px;font-size:12px;color:var(--ui-text-tertiary)}
-.wl-facts span{display:inline-flex;align-items:center;gap:5px}
-.wl-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
-.wl-empty{display:flex;align-items:center;gap:10px;padding:14px 16px;color:var(--ui-text-secondary)}
-.wl-empty b{color:var(--ui-text-primary);font-weight:600}
-.wl-work{display:flex;flex-direction:column;gap:8px;max-height:${BOX.working}px;overflow:auto}
-.wl-wrow{flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding:12px 14px;cursor:pointer}
-.wl-wrow.is-sel{border-color:var(--ui-accent)}
-.wl-wtitle{display:flex;align-items:center;gap:8px;min-width:0;font-weight:600}
-.wl-wtitle span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wl-wmeta{font-size:12px;color:var(--ui-text-tertiary);white-space:nowrap}
-.wl-wact{grid-column:1/-1;font-size:12px;color:var(--ui-text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wl-bar{grid-column:1/-1;height:4px;border-radius:2px;background:var(--ui-bg-tertiary);overflow:hidden}
-.wl-bar i{display:block;height:100%;background:var(--ui-accent)}
-.wl-pipe{padding:10px 6px 6px;overflow:auto;max-height:${BOX.pipeline}px}
-.wl-pipe svg{display:block}
-.wl-node{cursor:pointer;outline:none}
-.wl-card{fill:var(--ui-bg-tertiary);stroke:var(--ui-stroke-secondary);stroke-width:1}
-.wl-node:hover .wl-card,.wl-node:focus-visible .wl-card,.wl-node.is-sel .wl-card{stroke:var(--ui-accent);stroke-width:1.5}
-.wl-edge{stroke:var(--ui-stroke-primary);stroke-width:1.5;fill:none}
-.wl-arrow{fill:var(--ui-stroke-primary)}
-.wl-nt{height:100%;padding:7px 12px 0 26px;font-size:12.5px;line-height:1.35;pointer-events:none}
-.wl-nt b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wl-nt span{display:block;color:var(--ui-text-tertiary);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
-.wl-tl{padding:6px 0 0}
-.wl-tl-head,.wl-tl-row{display:grid;grid-template-columns:minmax(120px,240px) minmax(0,1fr) 64px;gap:12px;align-items:center}
-.wl-tl-head{font-size:11px;color:var(--ui-text-tertiary);height:28px;padding:0 18px;border-bottom:1px solid var(--ui-stroke-tertiary)}
-.wl-ticks{position:relative;height:100%}
-.wl-ticks span{position:absolute;top:6px;white-space:nowrap;transform:translateX(-50%)}
-.wl-ticks span:first-child{transform:none}
-.wl-ticks span:last-child{transform:translateX(-100%)}
-.wl-tl-body{max-height:${BOX.timeline}px;overflow:auto;padding-bottom:4px}
-.wl-tl-group{padding:10px 18px 4px;font-size:12px;font-weight:600;color:var(--ui-text-secondary);display:flex;gap:8px;min-width:0}
-.wl-tl-group em{font-style:normal;font-weight:400;color:var(--ui-text-tertiary);white-space:nowrap}
-.wl-tl-row{height:32px;cursor:pointer;border-radius:8px;margin:0 4px;padding:0 14px}
-.wl-tl-row:hover{background:var(--ui-row-hover-background)}
-.wl-tl-row.is-sel{background:var(--ui-row-active-background)}
-.wl-tl-row.is-dim{opacity:.35}
-.wl-tl-name{display:flex;align-items:center;gap:8px;min-width:0}
-.wl-tl-name span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wl-role{width:8px;height:8px;border-radius:2px;flex:none;display:inline-block}
-.wl-track{position:relative;height:20px}
-.wl-grid{position:absolute;inset:0;background:repeating-linear-gradient(90deg,var(--ui-stroke-quaternary) 0 1px,transparent 1px 25%)}
-.wl-run{position:absolute;top:5px;height:10px;border-radius:5px;min-width:4px}
-.wl-k-ok{background:var(--ui-green)}
-.wl-k-paused{background:var(--ui-yellow)}
-.wl-k-running{background:var(--ui-accent)}
-.wl-k-stopped{background:repeating-linear-gradient(-45deg,var(--ui-red) 0 4px,color-mix(in srgb,var(--ui-red) 55%,var(--ui-bg-chrome)) 4px 8px)}
-.wl-cost{text-align:right;font-size:12px;color:var(--ui-text-secondary);font-variant-numeric:tabular-nums}
-.wl-legend{display:flex;gap:16px;flex-wrap:wrap;padding:10px 18px;font-size:12px;color:var(--ui-text-tertiary);border-top:1px solid var(--ui-stroke-tertiary)}
-.wl-legend span{display:inline-flex;align-items:center;gap:6px}
-.wl-legend i{display:inline-block;width:14px;height:8px;border-radius:4px}
-.wl-dr{align-self:start;position:sticky;top:72px;max-height:${BOX.drawer}px;overflow:auto;padding:18px;min-width:0;overflow-wrap:anywhere}
-.wl-dr-top{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ui-text-tertiary)}
-.wl-dr-top .wl-x{margin-left:auto}
-.wl-x{border:0;background:var(--ui-bg-tertiary);border-radius:8px;width:28px;height:28px;display:grid;place-items:center}
-.wl-dr h3{margin:8px 0 10px;font-size:16px;font-weight:600;line-height:1.3;letter-spacing:-.01em}
-.wl-status{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;background:var(--ui-bg-tertiary);border:1px solid var(--ui-stroke-tertiary)}
-.wl-status i{width:7px;height:7px;border-radius:50%}
-.wl-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
-.wl-why{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--ui-yellow) 8%,var(--ui-bg-secondary));border-left:3px solid var(--ui-yellow)}
-.wl-why small,.wl-sub{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ui-text-tertiary);margin-bottom:2px}
-.wl-err{margin-top:8px;max-height:${BOX.error}px;overflow:auto;white-space:pre-wrap;padding:8px 10px;border-radius:8px;background:var(--ui-bg-editor);color:var(--ui-text-secondary)}
-.wl-raw{margin-top:6px;font-size:12px;color:var(--ui-text-tertiary)}
-.wl-raw summary{cursor:pointer}
-.wl-dl{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin:14px 0;background:var(--ui-stroke-tertiary);border-radius:10px;overflow:hidden}
-.wl-dl div{background:var(--ui-bg-tertiary);padding:8px 10px;min-width:0}
-.wl-dl dt{font-size:11px;color:var(--ui-text-tertiary)}
-.wl-dl dd{margin:2px 0 0;font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
-.wl-dl dd small{display:block;font-size:11px;font-weight:400;color:var(--ui-text-tertiary)}
-.wl-kv{display:grid;grid-template-columns:92px minmax(0,1fr);gap:5px 10px;font-size:12.5px}
-.wl-kv>span:nth-child(odd){color:var(--ui-text-tertiary)}
-.wl-attempts{margin:16px 0 0;padding:0;list-style:none;position:relative}
-.wl-attempts:before{content:"";position:absolute;left:5px;top:8px;bottom:8px;width:1px;background:var(--ui-stroke-secondary)}
-.wl-attempts li{position:relative;padding:0 0 12px 24px;font-size:12.5px}
-.wl-attempts li i{position:absolute;left:0;top:4px;width:11px;height:11px;border-radius:50%;background:var(--ui-bg-secondary);border:2px solid var(--ui-text-tertiary)}
-.wl-attempts li.is-ok i{border-color:var(--ui-green)}
-.wl-attempts li.is-stopped i{border-color:var(--ui-red)}
-.wl-attempts li.is-paused i{border-color:var(--ui-yellow)}
-.wl-attempts li.is-running i{border-color:var(--ui-accent)}
-.wl-attempts small{display:block;color:var(--ui-text-tertiary);overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
-.wl-dr .wl-actions{margin-top:6px}
-.wl-log{margin-top:14px}
-.wl-log-head{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-weight:600}
-.wl-log-head .wl-btn{margin-left:auto}
-.wl-logpre{margin:0;max-height:${BOX.log}px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:10px;border-radius:10px;background:var(--ui-bg-editor);color:var(--ui-text-secondary);line-height:1.45}
-.wl-note{margin-top:14px;border-top:1px solid var(--ui-stroke-tertiary);padding-top:12px}
-.wl-note h4{margin:0 0 8px;font-size:13px;font-weight:600}
-.wl-input{width:100%;background:var(--ui-bg-editor);border:1px solid var(--ui-stroke-secondary);border-radius:9px;padding:7px 10px;color:var(--ui-text-primary);font:inherit}
-.wl-input:focus{outline:none;border-color:var(--ui-accent)}
-textarea.wl-input{min-height:64px;resize:vertical}
-.wl-note .wl-btn{margin-top:8px}
-.wl-notice{position:fixed;right:24px;bottom:24px;z-index:40;display:flex;gap:10px;align-items:flex-start;max-width:420px;padding:12px 14px;border-radius:12px;background:var(--ui-bg-elevated);border:1px solid var(--ui-stroke-secondary);font-size:12.5px}
-.wl-notice .wl-i{stroke:var(--ui-accent);margin-top:2px}
-.wl-fx{padding:16px 20px 20px;min-width:0}
-.wl-fx-bar{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
-.wl-pill{display:inline-flex;align-items:center;gap:8px;padding:5px 12px;border-radius:999px;border:1px solid var(--ui-stroke-tertiary);background:var(--ui-bg-secondary);font-weight:600;white-space:nowrap}
-.wl-pill i{width:9px;height:9px;border-radius:50%;background:var(--ui-green)}
-.wl-pill.is-replay i{background:var(--ui-blue)}
-.wl-pill span{color:var(--ui-text-tertiary);font-weight:400}
-.wl-clock{display:flex;flex-direction:column;line-height:1.1;padding-left:12px;border-left:1px solid var(--ui-stroke-tertiary)}
-.wl-clock small{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ui-text-tertiary);font-weight:500}
-.wl-clock b{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
-.wl-stagewrap{position:relative;min-width:0}
-.wl-stage{position:relative;border:1px solid var(--ui-stroke-tertiary);border-radius:14px;overflow:hidden;background:var(--ui-bg-tertiary)}
-.wl-stage>svg{display:block;width:100%;height:auto;aspect-ratio:16/9;max-height:calc(100vh - 230px);min-height:320px}
-.wl-ctrl{display:flex;align-items:center;gap:10px;margin-top:10px;padding:6px 8px;border:1px solid var(--ui-stroke-tertiary);border-radius:12px;background:var(--ui-bg-secondary);min-width:0}
-.wl-ctrl input[type=range]{flex:1;min-width:80px;accent-color:var(--ui-accent)}
-.wl-tlab{font-size:11px;color:var(--ui-text-tertiary);white-space:nowrap;font-variant-numeric:tabular-nums}
-.wl-tlab b{color:var(--ui-text-primary);font-weight:600}
-.wl-root .wl-play{border:0;width:34px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--ui-text-primary);color:var(--ui-bg-chrome)}
-.wl-play .wl-i{fill:currentColor}
-.wl-now{border:1px solid var(--ui-stroke-secondary);height:30px;padding:0 12px;border-radius:9px;background:var(--ui-bg-tertiary);font-weight:600}
-.wl-now.is-live{background:var(--ui-green);border-color:var(--ui-green);color:var(--ui-bg-chrome)}
-.wl-fx-dr{position:absolute;top:12px;right:12px;bottom:12px;width:min(380px,calc(100% - 24px));overflow:auto;z-index:4;padding:18px;border-radius:12px;background:var(--ui-bg-elevated);border:1px solid var(--ui-stroke-secondary);overflow-wrap:anywhere}
-.wl-fx-dr.wl-dr{position:absolute;max-height:none}
-.wl-floor{fill:var(--ui-bg-secondary);stroke:var(--ui-stroke-tertiary)}
-.wl-gridline{stroke:var(--ui-stroke-quaternary);stroke-width:1}
-.wl-wall{fill:var(--ui-bg-quaternary)}
-.wl-sky{fill:color-mix(in srgb,var(--ui-blue) 30%,var(--ui-bg-tertiary))}
-.wl-zone{fill:var(--ui-bg-tertiary);stroke:var(--ui-stroke-secondary);stroke-width:2;stroke-dasharray:6 6}
-.wl-door{fill:var(--ui-stroke-primary)}
-.wl-dock{fill:color-mix(in srgb,var(--ui-orange) 13%,var(--ui-bg-secondary))}
-.wl-plank{stroke:color-mix(in srgb,var(--ui-orange) 20%,transparent);stroke-width:1.5}
-.wl-bed{fill:none;stroke:color-mix(in srgb,var(--ui-text-primary) 34%,var(--ui-bg-chrome));stroke-width:30;stroke-linejoin:round}
-.wl-bed-in{fill:none;stroke:color-mix(in srgb,var(--ui-text-primary) 20%,var(--ui-bg-chrome));stroke-width:22;stroke-linejoin:round}
-.wl-slats{fill:none;stroke:color-mix(in srgb,var(--ui-text-primary) 16%,transparent);stroke-width:22;stroke-dasharray:3 8;stroke-linejoin:round;animation:wl-run 1.1s linear infinite;animation-play-state:paused}
-.wl-fxsvg[data-moving="1"] .wl-slats{animation-play-state:running}
-.wl-redbed{fill:none;stroke:color-mix(in srgb,var(--ui-red) 28%,var(--ui-bg-chrome));stroke-width:30}
-.wl-redslats{fill:none;stroke:var(--ui-yellow);stroke-width:22;stroke-dasharray:9 9;opacity:.85;animation:wl-run 1.4s linear infinite;animation-play-state:paused}
-.wl-fxsvg[data-jam="1"] .wl-redslats{animation-play-state:running}
-.wl-cable{fill:none;stroke:var(--ui-stroke-primary);stroke-width:4;stroke-linecap:round}
-.wl-flabel{font-size:12px;font-weight:600;letter-spacing:1.6px;fill:var(--ui-text-tertiary)}
-.wl-m{cursor:pointer;outline:none}
-.wl-m-focus{fill:none;stroke:transparent;stroke-width:2;stroke-dasharray:5 4}
-.wl-m:hover .wl-m-focus,.wl-m:focus-visible .wl-m-focus{stroke:var(--ui-accent)}
-.wl-m-body{fill:var(--ui-bg-elevated);stroke:var(--ui-stroke-secondary)}
-.wl-m-dark{fill:color-mix(in srgb,var(--ui-text-primary) 70%,var(--ui-bg-chrome))}
-.wl-vent{fill:color-mix(in srgb,var(--ui-bg-chrome) 35%,transparent)}
-.wl-rod{stroke:var(--ui-text-tertiary);stroke-width:5;stroke-linecap:round}
-.wl-head,.wl-stamp{transform-box:view-box}
-.wl-head.is-work{animation:wl-press 1.05s ease-in-out infinite}
-.wl-stamp.is-work{animation:wl-press 1.4s ease-in-out infinite}
-.wl-head.is-jam{transform:translateY(12px)}
-.wl-lamp{fill:color-mix(in srgb,var(--ui-green) 40%,var(--ui-bg-elevated))}
-.wl-lamp.is-work{fill:var(--ui-green)}
-.wl-lamp.is-crash{fill:var(--ui-red);animation:wl-blink .52s steps(1) infinite}
-.wl-lamp.is-pause{fill:var(--ui-yellow);animation:wl-blink 1s steps(1) infinite}
-.wl-hz-a{fill:var(--ui-yellow)}
-.wl-hz-b{fill:color-mix(in srgb,var(--ui-text-primary) 80%,var(--ui-bg-chrome))}
-.wl-mname{font-size:10px;font-weight:600;letter-spacing:1.2px;fill:var(--ui-text-tertiary)}
-.wl-mnum{font-size:9px;font-weight:600;fill:var(--ui-bg-chrome)}
-.wl-glass{fill:color-mix(in srgb,var(--ui-purple) 8%,transparent);stroke:color-mix(in srgb,var(--ui-purple) 55%,transparent);stroke-width:2}
-.wl-glass.is-work{fill:color-mix(in srgb,var(--ui-purple) 22%,transparent)}
-.wl-beam{fill:var(--ui-purple);transform-box:view-box;animation:wl-beam 1.5s ease-in-out infinite}
-.wl-dome{fill:color-mix(in srgb,var(--ui-cyan) 18%,transparent);stroke:color-mix(in srgb,var(--ui-cyan) 70%,transparent);stroke-width:3}
-.wl-liquid{fill:color-mix(in srgb,var(--ui-cyan) 45%,transparent)}
-.wl-glassline{fill:none;stroke:var(--ui-text-primary);stroke-width:4;stroke-linecap:round}
-.wl-ink{fill:var(--ui-text-tertiary)}
-.wl-pkg{cursor:pointer;outline:none;transition:transform .7s cubic-bezier(.16,1,.3,1)}
-.wl-pkg-sh{fill:color-mix(in srgb,var(--ui-bg-chrome) 50%,transparent)}
-.wl-pkg-lid{fill:color-mix(in srgb,var(--ui-orange) 38%,var(--ui-bg-elevated))}
-.wl-pkg-body{fill:color-mix(in srgb,var(--ui-orange) 62%,var(--ui-bg-elevated))}
-.wl-pkg-tape{fill:color-mix(in srgb,var(--ui-orange) 80%,var(--ui-bg-chrome))}
-.wl-pkg.is-scrap{opacity:.8}
-.wl-pkg.is-scrap .wl-pkg-lid,.wl-pkg.is-scrap .wl-pkg-body{fill:var(--ui-bg-quaternary)}
-.wl-pkg-sel{fill:none;stroke:var(--ui-text-primary);stroke-width:2}
-.wl-pkg-focus{fill:none;stroke:transparent;stroke-width:2}
-.wl-pkg:focus-visible .wl-pkg-focus,.wl-pkg:hover .wl-pkg-focus{stroke:var(--ui-accent)}
-.wl-bang{fill:var(--ui-red)}
-.wl-bang.is-pause{fill:var(--ui-yellow)}
-.wl-bang-t{font-size:9px;font-weight:700;fill:var(--ui-bg-chrome)}
-.wl-lock{fill:var(--ui-text-primary)}
-.wl-lock-s{fill:none;stroke:var(--ui-bg-chrome);stroke-width:1.6}
-.wl-bay{fill:var(--ui-bg-tertiary)}
-.wl-bay.is-on{fill:color-mix(in srgb,var(--ui-red) 12%,var(--ui-bg-secondary))}
-.wl-bay-edge{fill:none;stroke:var(--ui-stroke-secondary);stroke-width:10}
-.wl-bay-edge.is-on{stroke:var(--ui-red)}
-.wl-ants{fill:none;stroke:color-mix(in srgb,var(--ui-text-primary) 75%,var(--ui-bg-chrome));stroke-width:10;stroke-dasharray:10 10;animation:wl-ants 1.2s linear infinite}
-.wl-binhead{fill:var(--ui-stroke-secondary)}
-.wl-binhead.is-on{fill:var(--ui-red)}
-.wl-binhead-t{font-size:13px;font-weight:600;letter-spacing:1px;fill:var(--ui-bg-chrome)}
-.wl-clear{font-size:13px;font-weight:500;fill:var(--ui-text-tertiary)}
-.wl-ring{fill:none;stroke:var(--ui-red);stroke-width:3;transform-box:fill-box;transform-origin:center;animation:wl-ring 1.4s ease-out infinite}
-.wl-halo{fill:color-mix(in srgb,var(--ui-red) 14%,transparent)}
-.wl-smoke circle{fill:var(--ui-text-tertiary);opacity:.3;transform-box:fill-box;transform-origin:center;animation:wl-smoke 2.4s ease-out infinite}
-.wl-smoke circle:nth-child(2){animation-delay:.8s}
-.wl-smoke circle:nth-child(3){animation-delay:1.6s}
-.wl-fo{overflow:visible}
-.wl-tag{height:100%;display:flex;align-items:center;justify-content:center;pointer-events:none}
-.wl-tag span{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:2px 10px;border-radius:11px;background:var(--ui-bg-elevated);border:1px solid var(--ui-stroke-secondary);font-size:11px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wl-tag i{width:8px;height:8px;border-radius:50%;flex:none}
-.wl-tag.is-crash span{background:var(--ui-red);border-color:var(--ui-red);color:var(--ui-bg-chrome)}
-.wl-tag.is-pause span{background:var(--ui-yellow);border-color:var(--ui-yellow);color:var(--ui-bg-chrome)}
-.wl-callout{height:100%;display:flex;flex-direction:column;justify-content:center;gap:1px;padding:6px 12px 6px 14px;border-radius:14px;background:var(--ui-bg-elevated);border:1px solid var(--ui-stroke-secondary);border-left:6px solid var(--ui-red);cursor:pointer;min-width:0;line-height:1.3;color:var(--ui-text-primary)}
-.wl-callout.is-pause{border-left-color:var(--ui-yellow)}
-.wl-callout small{font-size:10px;font-weight:600;letter-spacing:1.2px;color:var(--ui-text-secondary)}
-.wl-callout b{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wl-callout span{font-size:12px;color:var(--ui-text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wl-callout em{font-style:normal;font-size:12px;font-weight:600}
-.wl-sign{height:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 14px;border-radius:12px;background:var(--ui-bg-elevated);border:1px solid var(--ui-stroke-tertiary);color:var(--ui-text-primary)}
-.wl-sign b{font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}
-.wl-sign span{text-align:right;font-size:12px;color:var(--ui-text-tertiary);line-height:1.3}
-.wl-gatein{font-size:9px;font-weight:600;fill:var(--ui-text-tertiary)}
-.wl-lampin{fill:var(--ui-bg-quaternary)}
-.wl-lampin.is-on{fill:var(--ui-green)}
-.wl-overflow{font-size:12px;font-weight:600;fill:var(--ui-text-secondary)}
-.wl-scrim{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:24px;background:color-mix(in srgb,var(--ui-bg-chrome) 72%,transparent)}
-.wl-dlg{width:min(620px,100%);max-height:min(${BOX.dialog}px,100%);overflow:auto;padding:20px 22px;border-radius:14px;background:var(--ui-bg-elevated);border:1px solid var(--ui-stroke-secondary);color:var(--ui-text-primary);overflow-wrap:anywhere}
-.wl-dlg h2{margin:0 0 6px;font-size:16px;font-weight:600}
-.wl-dlg p{margin:6px 0;color:var(--ui-text-secondary)}
-.wl-dlg .wl-task{font-weight:600;color:var(--ui-text-primary)}
-.wl-steps{margin:10px 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;counter-reset:wl}
-.wl-steps li{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:8px;align-items:start;font-size:12.5px}
-.wl-steps .wl-st{font-size:11px;color:var(--ui-text-tertiary);white-space:nowrap}
-.wl-steps .wl-st.is-failed{color:var(--ui-text-primary);font-weight:600}
-.wl-steps .wl-serr{grid-column:2/-1;font-size:12px;color:var(--ui-text-secondary)}
-.wl-mark{width:10px;height:10px;border-radius:50%;margin-top:4px;border:2px solid var(--ui-stroke-primary)}
-.wl-mark.is-done{background:var(--ui-green);border-color:var(--ui-green)}
-.wl-mark.is-failed{background:var(--ui-red);border-color:var(--ui-red)}
-.wl-mark.is-running{border-color:var(--ui-accent)}
-.wl-field{display:flex;flex-direction:column;gap:4px;margin:12px 0;font-weight:600}
-.wl-field small{font-weight:400;color:var(--ui-text-tertiary)}
-.wl-field .wl-input{width:140px}
-.wl-quote{white-space:pre-wrap;padding:10px 12px;border-radius:10px;background:var(--ui-bg-secondary);max-height:200px;overflow:auto}
-.wl-callnote{padding:8px 10px;border-radius:8px;background:var(--ui-bg-secondary);font-size:12.5px}
-.wl-result{margin-top:10px;padding:8px 10px;border-radius:8px;border-left:3px solid var(--ui-green);background:var(--ui-bg-secondary)}
-.wl-result.is-failed{border-left-color:var(--ui-red)}
-.wl-dlg-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:16px}
-@keyframes wl-run{to{stroke-dashoffset:-22}}
-@keyframes wl-press{0%,62%,100%{transform:translateY(0)}22%,30%{transform:translateY(20px)}}
-@keyframes wl-beam{0%,100%{transform:translateX(0)}50%{transform:translateX(40px)}}
-@keyframes wl-blink{50%{opacity:.35}}
-@keyframes wl-ants{to{stroke-dashoffset:-40}}
-@keyframes wl-ring{0%{transform:scale(1);opacity:.6}100%{transform:scale(2.1);opacity:0}}
-@keyframes wl-smoke{0%{transform:translate(0,0) scale(.6);opacity:.45}100%{transform:translate(18px,-64px) scale(1.9);opacity:0}}
-@media (prefers-reduced-motion:reduce){.wl-root *,.wl-root *::before,.wl-root *::after{animation:none!important;transition:none!important}}
-`
-
-function StatusPill({ task, t }) {
-  const key = statusKey(task.status)
-  return h(
-    'span',
-    { className: 'wl-status', 'data-status': key },
-    h('i', { style: { background: STATUS_TONE[key] || 'var(--ui-text-tertiary)' } }),
-    t(`wingline.status.${key}`)
-  )
-}
-
-function reasonOf(task, t) {
-  const r = String(task.block_reason_plain || '').trim()
-  if (r) return r
-  const e = String(task.error_plain || '').split('\n')[0].trim()
-  return e || t('wingline.needs.reasonUnknown')
-}
-
-function retriesText(task, t) {
-  const used = isNum(task.consecutive_failures) ? task.consecutive_failures : 0
-  return isNum(task.max_retries) ? t('wingline.needs.retries', used, task.max_retries) : t('wingline.needs.retriesNoMax', used)
-}
-
-function NeedsYou({ list, selId, onSelect, onAction, now, t }) {
-  return h(
-    'section',
-    { 'aria-labelledby': 'wl-needs-h' },
-    h('h2', { className: 'wl-h2', id: 'wl-needs-h' }, t('wingline.needs.title'), list.length ? h('small', null, t('wingline.needs.count', list.length)) : null),
-    list.length
-      ? h(
-          'div',
-          { className: 'wl-needs' },
-          list.map(task => {
-            const r = lastRun(task)
-            return h(
-              'article',
-              {
-                key: task.id,
-                className: `wl-panel wl-attn${task.id === selId ? ' is-sel' : ''}`,
-                'data-id': task.id,
-                onClick: () => onSelect(task.id)
-              },
-              h('div', { className: 'wl-badge' }, h(Icon, { name: 'clock', size: 20 })),
-              h(
-                'div',
-                { style: { minWidth: 0 } },
-                h('h3', null, task.title),
-                h('p', { className: 'wl-reason' }, reasonOf(task, t)),
-                h(
-                  'div',
-                  { className: 'wl-facts' },
-                  h('span', null, h(Icon, { name: 'alert', size: 13 }), retriesText(task, t)),
-                  h('span', null, h(Icon, { name: 'clock', size: 13 }), t('wingline.needs.worked', fmtDur(t, workSeconds(task, now)))),
-                  h('span', null, h(Icon, { name: 'retry', size: 13 }), t('wingline.needs.attempts', runsOf(task).length)),
-                  h('span', null, h(Icon, { name: 'coin', size: 13 }), money(task.cost?.usd)),
-                  h('span', null, h(Icon, { name: 'user', size: 13 }), task.assignee || '—'),
-                  r && isNum(r.ended_at) ? h('span', null, t('wingline.needs.stopped', fmtWhen(r.ended_at))) : null
-                ),
-                h(
-                  'div',
-                  { className: 'wl-actions', onClick: e => e.stopPropagation() },
-                  h(Btn, { id: 'retry', icon: 'retry', kind: 'primary', label: t('wingline.act.retry'), onClick: () => onAction('retry', task) }),
-                  h(Btn, { id: 'log', icon: 'log', label: t('wingline.act.log'), onClick: () => onAction('log', task) }),
-                  h(Btn, { id: 'chat', icon: 'chat', label: t('wingline.act.chat'), onClick: () => onAction('chat', task) }),
-                  h(Btn, { id: 'archive', icon: 'archive', kind: 'ghost', label: t('wingline.act.archive'), onClick: () => onAction('archive', task) })
-                )
-              )
-            )
-          })
-        )
-      : h('div', { className: 'wl-panel wl-empty' }, h(Icon, { name: 'info' }), t('wingline.needs.none'))
-  )
-}
-
-function WorkingNow({ list, tasks, selId, onSelect, now, t }) {
-  let body
-  if (list.length) {
-    body = h(
-      'div',
-      { className: 'wl-work' },
-      list.map(task => {
-        const runs = runsOf(task)
-        const cur = runs.filter(r => !isNum(r.ended_at)).pop() || runs[runs.length - 1]
-        const elapsed = cur ? Math.max(0, now - cur.started_at) : 0
-        const limit = (cur && isNum(cur.max_runtime_seconds) && cur.max_runtime_seconds) || (isNum(task.max_runtime_seconds) ? task.max_runtime_seconds : null)
-        const act = task.activity && task.activity.text ? task.activity : null
-        return h(
-          'article',
-          { key: task.id, className: `wl-panel wl-wrow${task.id === selId ? ' is-sel' : ''}`, 'data-id': task.id, onClick: () => onSelect(task.id) },
-          h('div', { className: 'wl-wtitle' }, h('span', { className: 'wl-role', style: { background: ROLE_TONE[roleOf(task)] } }), h('span', null, task.title)),
-          h('div', { className: 'wl-wmeta' }, t('wingline.working.elapsed', fmtDur(t, elapsed)), limit ? ` · ${t('wingline.working.limit', fmtDur(t, limit))}` : ''),
-          h(
-            'div',
-            { className: 'wl-wact' },
-            act ? `${act.text}${isNum(act.at) ? ` · ${t('wingline.working.ago', fmtDur(t, Math.max(0, now - act.at)))}` : ''}` : t('wingline.working.noActivity')
-          ),
-          limit ? h('div', { className: 'wl-bar' }, h('i', { style: { width: `${Math.min(100, (elapsed / limit) * 100)}%` } })) : null
-        )
-      })
-    )
-  } else {
-    const ends = tasks.flatMap(x => runsOf(x).map(r => r.ended_at)).filter(isNum)
-    body = h(
-      'div',
-      { className: 'wl-panel wl-empty' },
-      h(Icon, { name: 'moon' }),
-      h('div', null, t('wingline.working.none'), ' ', ends.length ? t('wingline.working.lastStop', fmtWhen(Math.max(...ends))) : t('wingline.working.nothingYet'))
-    )
-  }
-  return h('section', { 'aria-labelledby': 'wl-work-h' }, h('h2', { className: 'wl-h2', id: 'wl-work-h' }, t('wingline.working.title')), body)
-}
-
-function Pipeline({ tasks, selId, onSelect, now, t }) {
-  const lay = useMemo(() => pipelineLayout(tasks), [tasks])
-  return h(
-    'section',
-    { 'aria-labelledby': 'wl-pipe-h' },
-    h('h2', { className: 'wl-h2', id: 'wl-pipe-h' }, t('wingline.pipe.title'), h('small', null, t('wingline.pipe.sub'))),
-    lay.nodes.length
-      ? h(
-          'div',
-          { className: 'wl-panel wl-pipe' },
-          h(
-            'svg',
-            { width: lay.width, height: lay.height, viewBox: `0 0 ${lay.width} ${lay.height}`, role: 'group', 'aria-label': t('wingline.pipe.title') },
-            h(
-              'defs',
-              null,
-              h('marker', { id: 'wl-ar', viewBox: '0 0 10 10', refX: 8, refY: 5, markerWidth: 6, markerHeight: 6, orient: 'auto' }, h('path', { d: 'M0,1L9,5L0,9z', className: 'wl-arrow' }))
-            ),
-            lay.edges.map(e => {
-              const x1 = e.from.x + NODE.w
-              const y1 = e.from.y + NODE.h / 2
-              const x2 = e.to.x - 4
-              const y2 = e.to.y + NODE.h / 2
-              const mx = (x1 + x2) / 2
-              return h('path', { key: e.key, className: 'wl-edge', d: `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`, markerEnd: 'url(#wl-ar)' })
-            }),
-            lay.nodes.map(n => {
-              const task = n.task
-              const r = lastRun(task)
-              const tone = STATUS_TONE[statusKey(task.status)] || 'var(--ui-text-tertiary)'
-              return h(
-                'g',
-                {
-                  key: task.id,
-                  className: `wl-node${task.id === selId ? ' is-sel' : ''}`,
-                  transform: `translate(${n.x},${n.y})`,
-                  tabIndex: 0,
-                  role: 'button',
-                  'aria-label': task.title,
-                  'data-id': task.id,
-                  onClick: () => onSelect(task.id),
-                  onKeyDown: e => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      onSelect(task.id)
-                    }
-                  }
-                },
-                h('rect', { className: 'wl-card', width: NODE.w, height: NODE.h, rx: 10 }),
-                h('rect', { x: 12, y: 13, width: 8, height: 8, rx: 2, style: { fill: ROLE_TONE[roleOf(task)] } }),
-                h('circle', { cx: NODE.w - 14, cy: 17, r: 4, style: { fill: tone } }),
-                h(
-                  'foreignObject',
-                  { x: 0, y: 0, width: NODE.w - 22, height: NODE.h },
-                  h(
-                    'div',
-                    { className: 'wl-nt' },
-                    h('b', null, n.label),
-                    h('span', null, `${fmtDur(t, workSeconds(task, now))} · ${money(task.cost?.usd)}${r ? ` · ${t(`wingline.run.${runKind(r)}`)}` : ''}`)
-                  )
-                )
-              )
-            })
-          )
-        )
-      : h('div', { className: 'wl-panel wl-empty' }, h(Icon, { name: 'info' }), t('wingline.pipe.none'))
-  )
-}
-
-function Timeline({ tasks, axis, selId, onSelect, filter, now, t }) {
-  const groups = useMemo(() => timelineGroups(tasks, t), [tasks, t])
-  const pct = x => (axis.toC(x) / axis.span) * 100
-  const allowed = filter ? FILTERS[filter] : null
-  return h(
-    'section',
-    { 'aria-labelledby': 'wl-tl-h' },
-    h('h2', { className: 'wl-h2', id: 'wl-tl-h' }, t('wingline.tl.title'), h('small', null, t('wingline.tl.sub'))),
-    h(
-      'div',
-      { className: 'wl-panel wl-tl' },
-      h(
-        'div',
-        { className: 'wl-tl-head' },
-        h('span', null, t('wingline.tl.task')),
-        h(
-          'div',
-          { className: 'wl-ticks' },
-          [0, 1, 2, 3, 4].map(k => h('span', { key: k, style: { left: `${k * 25}%` } }, fmtWhen(axis.toR((axis.span * k) / 4))))
-        ),
-        h('span', { style: { textAlign: 'right' } }, t('wingline.tl.spent'))
-      ),
-      h(
-        'div',
-        { className: 'wl-tl-body' },
-        groups.map(g =>
-          h(
-            'div',
-            { key: `g-${g.name}-${g.tasks[0].id}`, className: 'wl-tl-groupbox' },
-            h('div', { className: 'wl-tl-group' }, h('span', null, g.name), h('em', null, t('wingline.tl.group', g.tasks.length, money(g.tasks.reduce((s, x) => s + (x.cost?.usd || 0), 0))))),
-            g.tasks.map(task =>
-              h(
-                'div',
-                {
-                  key: task.id,
-                  className: `wl-tl-row${task.id === selId ? ' is-sel' : ''}${allowed && !allowed.includes(task.status) ? ' is-dim' : ''}`,
-                  'data-id': task.id,
-                  tabIndex: 0,
-                  role: 'button',
-                  'aria-label': task.title,
-                  onClick: () => onSelect(task.id),
-                  onKeyDown: e => {
-                    if (e.key === 'Enter') onSelect(task.id)
-                  }
-                },
-                h('div', { className: 'wl-tl-name' }, h('span', { className: 'wl-role', style: { background: ROLE_TONE[roleOf(task)] } }), h('span', null, task.title)),
-                h(
-                  'div',
-                  { className: 'wl-track' },
-                  h('div', { className: 'wl-grid' }),
-                  runsOf(task).map((r, i) => {
-                    const a = pct(r.started_at)
-                    const b = pct(runEnd(r, now))
-                    return h('div', {
-                      key: `${task.id}-${r.id ?? i}`,
-                      className: `wl-run wl-k-${runKind(r)}`,
-                      'data-kind': runKind(r),
-                      style: { left: `${a}%`, width: `${Math.max(0.5, b - a)}%` }
-                    })
-                  })
-                ),
-                h('div', { className: 'wl-cost' }, money(task.cost?.usd))
-              )
-            )
-          )
-        )
-      ),
-      h(
-        'div',
-        { className: 'wl-legend' },
-        ['ok', 'stopped', 'paused', 'running'].map(k => h('span', { key: k }, h('i', { className: `wl-k-${k}` }), t(`wingline.run.${k}`))),
-        h(
-          'span',
-          null,
-          t('wingline.tl.roles'),
-          ROLES.map(r => h('span', { key: r }, h('span', { className: 'wl-role', style: { background: ROLE_TONE[r] } }), t(`wingline.role.${r}`)))
-        )
-      )
-    )
-  )
-}
-
-function Drawer({ task, byId, now, t, onAction, log, note, setNote, onClose, className }) {
-  if (!task) return h('aside', { className: `wl-panel wl-dr ${className || ''}` }, h('div', { className: 'wl-empty' }, h(Icon, { name: 'info' }), t('wingline.dr.pick')))
-  const role = roleOf(task)
-  const runs = runsOf(task)
-  const titleOf = id => byId.get(id)?.title || id
-  const waits = (task.parents || []).map(titleOf).join(', ') || t('wingline.dr.nothing')
-  const unlocks = (task.children || []).map(titleOf).join(', ') || t('wingline.dr.nothing')
-  const blocked = task.status === 'blocked'
-  const costStatus = ['estimated', 'actual', 'mixed', 'none'].includes(task.cost?.status) ? task.cost.status : 'none'
-  const limit = isNum(task.max_runtime_seconds) && task.max_runtime_seconds > 0 ? fmtDur(t, task.max_runtime_seconds) : t('wingline.dr.noLimit')
-  const logHere = log && log.id === task.id ? log : null
-  return h(
-    'aside',
-    { className: `wl-panel wl-dr ${className || ''}`, 'aria-live': 'polite', 'data-id': task.id },
-    h(
-      'div',
-      { className: 'wl-dr-top' },
-      h('span', { className: 'wl-role', style: { background: ROLE_TONE[role] } }),
-      h('span', null, t(`wingline.role.${role}`), ' · '),
-      h('span', { className: 'wl-mono' }, task.id),
-      onClose ? h('button', { type: 'button', className: 'wl-x', 'aria-label': t('wingline.dr.close'), onClick: onClose }, h(Icon, { name: 'close', size: 14 })) : null
-    ),
-    h('h3', null, task.title),
-    h(StatusPill, { task, t }),
-    blocked
-      ? h(
-          'div',
-          { className: 'wl-why' },
-          h('small', null, t('wingline.dr.why')),
-          reasonOf(task, t),
-          task.error_plain ? h('div', { className: 'wl-err wl-mono' }, task.error_plain) : null,
-          task.error_raw && task.error_raw !== task.error_plain
-            ? h('details', { className: 'wl-raw' }, h('summary', null, t('wingline.dr.raw')), h('div', { className: 'wl-err wl-mono' }, task.error_raw))
-            : null
-        )
-      : task.error_plain && task.status !== 'done'
-        ? h('div', { className: 'wl-why' }, h('small', null, t('wingline.dr.error')), h('div', { className: 'wl-err wl-mono' }, task.error_plain))
-        : null,
-    h(
-      'dl',
-      { className: 'wl-dl' },
-      h('div', null, h('dt', null, t('wingline.dr.spent')), h('dd', null, money(task.cost?.usd), h('small', { 'data-cost': costStatus }, t(`wingline.cost.${costStatus}`)))),
-      h('div', null, h('dt', null, t('wingline.dr.work')), h('dd', null, fmtDur(t, workSeconds(task, now)))),
-      h('div', null, h('dt', null, t('wingline.dr.attempts')), h('dd', null, String(runs.length))),
-      h('div', null, h('dt', null, t('wingline.dr.comments')), h('dd', null, String(isNum(task.comments) ? task.comments : 0)))
-    ),
-    h(
-      'div',
-      { className: 'wl-kv' },
-      h('span', null, t('wingline.dr.assignee')),
-      h('span', null, task.assignee || '—'),
-      h('span', null, t('wingline.dr.limit')),
-      h('span', null, limit),
-      h('span', null, t('wingline.dr.retries')),
-      h('span', null, isNum(task.max_retries) ? `${task.consecutive_failures || 0}/${task.max_retries}` : String(task.consecutive_failures || 0)),
-      h('span', null, t('wingline.dr.created')),
-      h('span', null, fmtWhen(task.created_at)),
-      h('span', null, t('wingline.dr.waits')),
-      h('span', null, waits),
-      h('span', null, t('wingline.dr.unlocks')),
-      h('span', null, unlocks),
-      task.activity && task.activity.text ? h('span', null, t('wingline.dr.activity')) : null,
-      task.activity && task.activity.text ? h('span', null, task.activity.text) : null
-    ),
-    runs.length
-      ? h(
-          'ol',
-          { className: 'wl-attempts' },
-          runs.map((r, i) => {
-            const kind = runKind(r)
-            const took = runEnd(r, now) - r.started_at
-            const lim = isNum(r.max_runtime_seconds) && r.max_runtime_seconds > 0 ? r.max_runtime_seconds : null
-            const detail = r.error_plain || r.summary || ''
-            return h(
-              'li',
-              { key: r.id ?? i, className: `is-${kind}` },
-              h('i', null),
-              h('b', null, t('wingline.run.attempt', i + 1)),
-              ` · ${fmtWhen(r.started_at)} · ${t(`wingline.run.${kind}`)} · ${t('wingline.run.took', fmtDur(t, took))}`,
-              kind === 'stopped' ? h('small', null, r.outcome === 'timed_out' ? t('wingline.run.limitHit', fmtDur(t, lim || took)) : lim && took > lim ? t('wingline.run.pastLimit', fmtDur(t, lim), r.outcome || r.status || '?') : t('wingline.run.outcome', r.outcome || r.status || '?')) : null,
-              detail ? h('small', null, detail) : null
-            )
-          })
-        )
-      : h('p', { className: 'wl-raw' }, t('wingline.dr.noRuns')),
-    h(
-      'div',
-      { className: 'wl-actions' },
-      blocked ? h(Btn, { id: 'retry', icon: 'retry', kind: 'primary', label: t('wingline.act.retry'), onClick: () => onAction('retry', task) }) : null,
-      h(Btn, { id: 'log', icon: 'log', label: t('wingline.act.log'), onClick: () => onAction('log', task) }),
-      h(Btn, { id: 'kanban', icon: 'board', label: t('wingline.act.kanban'), onClick: () => onAction('kanban', task) }),
-      h(Btn, { id: 'chat', icon: 'chat', label: t('wingline.act.chat'), onClick: () => onAction('chat', task) }),
-      task.status !== 'archived' ? h(Btn, { id: 'archive', icon: 'archive', kind: 'ghost', label: t('wingline.act.archive'), onClick: () => onAction('archive', task) }) : null
-    ),
-    logHere
-      ? h(
-          'div',
-          { className: 'wl-log' },
-          h('div', { className: 'wl-log-head' }, h(Icon, { name: 'log' }), t('wingline.dr.log'), h(Btn, { id: 'log-close', kind: 'ghost', label: t('wingline.dr.logClose'), onClick: () => onAction('log-close', task) })),
-          logHere.loading
-            ? h('p', { className: 'wl-raw' }, t('wingline.dr.logLoading'))
-            : logHere.error
-              ? h('p', { className: 'wl-raw', role: 'alert' }, t('wingline.dr.logFailed', logHere.error))
-              : !logHere.exists
-                ? h('p', { className: 'wl-raw' }, t('wingline.dr.logNone'))
-                : h(
-                    'div',
-                    null,
-                    logHere.truncated ? h('p', { className: 'wl-raw' }, t('wingline.dr.logTrunc')) : null,
-                    h('pre', { className: 'wl-logpre wl-mono' }, logHere.content || t('wingline.dr.logEmpty'))
-                  )
-        )
-      : null,
-    h(
-      'div',
-      { className: 'wl-note' },
-      h('h4', null, t('wingline.dr.note')),
-      h('textarea', {
-        className: 'wl-input',
-        placeholder: t('wingline.dr.notePh'),
-        'aria-label': t('wingline.dr.note'),
-        value: note,
-        onChange: e => setNote(e.target.value)
-      }),
-      h(Btn, { id: 'note', icon: 'note', label: t('wingline.act.note'), disabled: !note.trim(), onClick: () => onAction('note', task) })
-    )
-  )
-}
-
-function Tag({ x, y, w = 220, text, tone, kind }) {
-  return h(
-    'foreignObject',
-    { className: 'wl-fo', x: x - w / 2, y: y - 12, width: w, height: 24 },
-    h('div', { className: `wl-tag${kind ? ` is-${kind}` : ''}` }, h('span', null, tone ? h('i', { style: { background: tone } }) : null, text))
-  )
-}
-
-function Hazard({ x, y, w, h: hh, r }) {
-  return h('rect', { x, y, width: w, height: hh, rx: r, style: { fill: 'url(#wl-hz)' } })
-}
-
-function Lamp({ x, y, st }) {
-  return h('circle', { cx: x, cy: y, r: st === 'crash' ? 6.5 : st === 'pause' ? 6 : 5, className: `wl-lamp${st === 'idle' ? '' : ` is-${st}`}` })
-}
-
-function Block({ x, y, w, h: hh, r = 10, role }) {
-  return h(
-    'g',
-    null,
-    h('rect', { className: 'wl-m-body', x, y, width: w, height: hh, rx: r }),
-    h('rect', { x: x + 2, y: y + hh - 4, width: w - 4, height: 3, rx: 1.5, style: { fill: ROLE_TONE[role] } })
-  )
-}
-
-function MachineArt({ m, st, gateIn }) {
-  const { x, y } = m
-  const jam = st === 'crash' || st === 'pause'
-  const work = st === 'work'
-  if (m.kind === 'press') {
-    return h(
-      'g',
-      null,
-      h(Block, { x: x - 50, y: y - 62, w: 100, h: 34, role: m.role }),
-      h(Block, { x: x - 50, y: y + 28, w: 100, h: 34, role: m.role }),
-      jam ? h(Hazard, { x: x - 46, y: y + 48, w: 92, h: 10, r: 4 }) : null,
-      h(
-        'g',
-        { className: `wl-head${work ? ' is-work' : jam ? ' is-jam' : ''}` },
-        h('line', { className: 'wl-rod', x1: x - 18, y1: y - 40, x2: x - 18, y2: y - 50 }),
-        h('line', { className: 'wl-rod', x1: x + 18, y1: y - 40, x2: x + 18, y2: y - 50 }),
-        h('rect', { x: x - 30, y: y - 50, width: 60, height: 46, rx: 9, style: { fill: ROLE_TONE[m.role] } }),
-        h('rect', { x: x - 14, y: y - 34, width: 28, height: 14, rx: 4, className: 'wl-vent' })
-      ),
-      h('rect', { className: 'wl-m-dark', x: x - 40, y: y - 66, width: 80, height: 26, rx: 8 }),
-      [0, 1, 2, 3, 4].map(k => h('rect', { key: k, className: 'wl-vent', x: x - 30 + k * 10, y: y - 60, width: 5, height: 14 })),
-      h(Lamp, { x: x + 30, y: y - 53, st })
-    )
-  }
-  if (m.kind === 'scan') {
-    return h(
-      'g',
-      null,
-      h(Block, { x: x - 30, y: y - 42, w: 60, h: 20, r: 8, role: m.role }),
-      h(Block, { x: x - 30, y: y + 22, w: 60, h: 20, r: 8, role: m.role }),
-      h('rect', { className: `wl-glass${work ? ' is-work' : ''}`, x: x - 26, y: y - 30, width: 52, height: 60, rx: 10 }),
-      work ? h('rect', { className: 'wl-beam', x: x - 21.5, y: y - 28, width: 3, height: 56 }) : null,
-      jam ? h(Hazard, { x: x - 28, y: y + 34, w: 56, h: 7, r: 3 }) : null,
-      h('rect', { className: 'wl-m-dark', x: x - 34, y: y - 46, width: 68, height: 14, rx: 6 }),
-      h('text', { className: 'wl-mnum', x: x - 22, y: y - 36, textAnchor: 'middle' }, String(m.n)),
-      h(Lamp, { x: x + 24, y: y - 39, st })
-    )
-  }
-  if (m.kind === 'gate') {
-    const ins = gateIn || { done: [], total: 0 }
-    const n = Math.min(ins.total, 6)
-    const step = n > 4 ? 16 : 24
-    return h(
-      'g',
-      null,
-      h(Block, { x: x - 60, y: y - 66, w: 120, h: 40, r: 12, role: m.role }),
-      h(Block, { x: x - 60, y: y + 26, w: 120, h: 40, r: 12, role: m.role }),
-      h(
-        'g',
-        { className: `wl-stamp${work ? ' is-work' : ''}` },
-        h('line', { className: 'wl-rod', x1: x, y1: y - 50, x2: x, y2: y - 46, style: { strokeWidth: 7 } }),
-        h('circle', { cx: x, cy: y - 36, r: 26, style: { fill: ROLE_TONE[m.role] } }),
-        h('circle', { cx: x, cy: y - 36, r: 15, className: 'wl-glassline', style: { strokeWidth: 3, opacity: 0.5 } })
-      ),
-      jam ? h(Hazard, { x: x - 56, y: y - 40, w: 112, h: 8, r: 4 }) : null,
-      Array.from({ length: n }, (_, i) => h('circle', { key: i, className: `wl-lampin${ins.done[i] ? ' is-on' : ''}`, cx: x - ((n - 1) * step) / 2 + i * step, cy: y + 40, r: 6 })),
-      ins.total ? h('text', { className: 'wl-gatein', x, y: y + 58, textAnchor: 'middle' }, ins.label) : null,
-      h(Lamp, { x: x + 46, y: y - 56, st })
-    )
-  }
-  return h(
-    'g',
-    null,
-    h('rect', { className: 'wl-m-body', x: x - 66, y: y - 48, width: 132, height: 96, rx: 22 }),
-    h('rect', { x: x - 64, y: y + 40, width: 128, height: 6, rx: 3, style: { fill: ROLE_TONE[m.role] } }),
-    h('circle', { className: 'wl-dome', cx: x + 18, cy: y - 6, r: 30 }),
-    h('path', { className: 'wl-liquid', d: `M${x - 10},${y + 6} Q${x + 18},${y - 2} ${x + 46},${y + 6} A30,30 0 0 1 ${x - 10},${y + 6}z` }),
-    h('circle', { className: 'wl-glassline', cx: x - 34, cy: y - 18, r: 9 }),
-    h('line', { className: 'wl-glassline', x1: x - 28, y1: y - 12, x2: x - 20, y2: y - 4 }),
-    jam ? h(Hazard, { x: x - 60, y: y + 28, w: 120, h: 10, r: 4 }) : null,
-    h(Lamp, { x: x + 52, y: y - 34, st })
-  )
-}
-
-function Crate({ task, x, y, sel, alert, scrap, onSelect, label }) {
-  return h(
-    'g',
-    {
-      className: `wl-pkg${scrap ? ' is-scrap' : ''}`,
-      style: { transform: `translate(${x}px, ${y}px)` },
-      role: 'button',
-      tabIndex: 0,
-      'aria-label': label,
-      'data-id': task.id,
-      'data-pkg': '1',
-      onClick: e => {
-        e.stopPropagation()
-        onSelect(task.id)
-      },
-      onKeyDown: e => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
-          onSelect(task.id)
-        }
-      }
-    },
-    h('ellipse', { className: 'wl-pkg-sh', cx: 2, cy: 12, rx: 16, ry: 5.5 }),
-    h('rect', { className: 'wl-pkg-lid', x: -15, y: -13.5, width: 30, height: 14, rx: 4 }),
-    h('rect', { className: 'wl-pkg-body', x: -15, y: -4.5, width: 30, height: 18, rx: 4 }),
-    h('rect', { className: 'wl-pkg-tape', x: -3, y: -13.5, width: 6, height: 9 }),
-    h('rect', { x: -11, y: 0.5, width: 9, height: 8, rx: 2, style: { fill: scrap ? 'var(--ui-text-quaternary)' : ROLE_TONE[roleOf(task)] } }),
-    alert
-      ? h(
-          'g',
-          null,
-          h('rect', { className: `wl-bang${alert === 'pause' ? ' is-pause' : ''}`, x: 1, y: -0.5, width: 11, height: 10, rx: 2 }),
-          h('text', { className: 'wl-bang-t', x: 6.5, y: 7.5, textAnchor: 'middle' }, '!')
-        )
-      : null,
-    h('rect', { className: sel ? 'wl-pkg-sel' : 'wl-pkg-focus', x: -21, y: -20, width: 42, height: 40, rx: 8 })
-  )
-}
-
-function Factory({ tasks, now, axis, selId, onSelect, onNotice, t, drawer }) {
-  const [live, setLive] = useState(true)
-  const [playing, setPlaying] = useState(false)
-  const [speed, setSpeed] = useState(4)
-  const [c, setC] = useState(axis.span)
-  const cRef = useRef(c)
-  cRef.current = c
-  const spanRef = useRef(axis.span)
-  spanRef.current = axis.span
-  useEffect(() => {
-    if (!playing) return undefined
-    const id = window.setInterval(() => {
-      const next = cRef.current + 0.1 * speed * 60
-      if (next >= spanRef.current) {
-        setPlaying(false)
-        setLive(true)
-        setC(spanRef.current)
-      } else setC(next)
-    }, 100)
-    return () => window.clearInterval(id)
-  }, [playing, speed])
-  useEffect(() => {
-    if (live) setC(axis.span)
-  }, [live, axis.span])
-  const T = live ? null : axis.toR(Math.min(c, axis.span))
-  const lay = useMemo(() => layoutFactory(tasks, T), [tasks, T])
-  const byId = useMemo(() => new Map(tasks.map(x => [x.id, x])), [tasks])
-  const names = {
-    pressA: t('wingline.fx.machine.pressA'),
-    pressB: t('wingline.fx.machine.pressB'),
-    gate: t('wingline.fx.machine.gate'),
-    lab: t('wingline.fx.machine.lab')
-  }
-  const nameOf = m => (m.kind === 'scan' ? t('wingline.fx.machine.scan', m.n) : names[m.key])
-  const working = Object.values(lay.occ).filter(o => o.state === 'work').length
-  const nBay = lay.zones.bay.length
-  const shipped = lay.zones.dock.reduce((s, x) => s + (x.cost?.usd || 0), 0)
-  const [day, time] = fmtClock(live ? now : T)
-  const machineOfTask = {}
-  for (const [k, o] of Object.entries(lay.occ)) machineOfTask[o.task.id] = k
-  const whereOf = task => {
-    const z = lay.zoneOf[task.id]
-    if (z === 'machine') {
-      const key = Object.keys(lay.occ).find(k => lay.occ[k].task.id === task.id || lay.occ[k].extra.some(e => e.id === task.id))
-      const m = MACHINES.find(x => x.key === key)
-      return t('wingline.fx.where.machine', m ? nameOf(m) : '')
-    }
-    if (z === 'bay') return lay.kinds[task.id] === 'crash' ? t('wingline.fx.where.crash') : t('wingline.fx.where.pause')
-    if (z === 'intake') return (task.parents || []).some(p => lay.zoneOf[p] && lay.zoneOf[p] !== 'dock') ? t('wingline.fx.where.wait') : t('wingline.fx.where.intake')
-    if (z === 'dock') return t('wingline.fx.where.dock')
-    return t('wingline.fx.where.scrap')
-  }
-  const gateTask = (lay.occ.gate && lay.occ.gate.task) || [...tasks].filter(x => roleOf(x) === 'gate' && lay.zoneOf[x.id] !== 'hidden').sort((a, b) => firstStart(b) - firstStart(a))[0]
-  const gateIn = gateTask
-    ? (() => {
-        const ps = (gateTask.parents || []).filter(p => byId.has(p))
-        const done = ps.map(p => lay.zoneOf[p] === 'dock')
-        return { done, total: ps.length, label: t('wingline.fx.inputs', done.filter(Boolean).length, ps.length) }
-      })()
-    : null
-  const machineTask = m => {
-    const o = lay.occ[m.key]
-    if (o) return o.task
-    const done = tasks
-      .filter(x => roleOf(x) === m.role)
-      .map(x => ({ x, r: runsOf(x).filter(r => T == null || r.started_at <= T).pop() }))
-      .filter(v => v.r)
-      .sort((a, b) => b.r.started_at - a.r.started_at)
-    return done.length ? done[0].x : null
-  }
-  const clickMachine = m => {
-    const task = machineTask(m)
-    if (task) onSelect(task.id)
-    else onNotice(t('wingline.fx.noTask', nameOf(m)))
-  }
-  const crate = (task, zone) => {
-    const p = lay.pos[task.id]
-    if (!p) return null
-    return h(Crate, {
-      key: task.id,
-      task,
-      x: p[0],
-      y: p[1],
-      sel: task.id === selId,
-      alert: zone === 'bay' ? lay.kinds[task.id] : null,
-      scrap: zone === 'scrap',
-      onSelect,
-      label: t('wingline.fx.pkg', task.title, whereOf(task))
-    })
-  }
-  const visible = ['intake', 'machine', 'bay', 'dock', 'scrap'].flatMap(z => lay.zones[z].map(task => ({ task, z })))
-  const first = lay.zones.bay[0]
-  const firstPos = first ? lay.pos[first.id] : null
-  const callout = first && firstPos
-    ? (() => {
-        const kind = lay.kinds[first.id]
-        const r = runsOf(first).filter(x => isNum(x.ended_at) && (T == null || x.ended_at <= T)).pop()
-        const kick = kind === 'pause' ? t('wingline.fx.callPause') : r && r.outcome === 'timed_out' ? t('wingline.fx.callLimit') : r && r.outcome === 'crashed' ? t('wingline.fx.callCrash') : t('wingline.fx.callStop')
-        const cx = firstPos[0] + 40 + (Math.min(nBay, CAP.bay) - 1) * 76
-        const w = Math.max(160, Math.min(1548 - cx, 330))
-        return h(
-          'foreignObject',
-          { className: 'wl-fo', x: cx, y: firstPos[1] - 50, width: w, height: 86 },
-          h(
-            'div',
-            {
-              className: `wl-callout${kind === 'pause' ? ' is-pause' : ''}`,
-              role: 'button',
-              tabIndex: 0,
-              'data-callout': first.id,
-              onClick: () => onSelect(first.id),
-              onKeyDown: e => {
-                if (e.key === 'Enter') onSelect(first.id)
-              }
-            },
-            h('small', null, kick),
-            h('b', null, first.title),
-            h('span', null, t('wingline.fx.callMeta', fmtDur(t, workSeconds(first, T ?? now)), runsOf(first).length, money(first.cost?.usd))),
-            h('em', null, t('wingline.fx.decide'))
-          )
-        )
-      })()
-    : null
-  const toggle = () => {
-    if (playing) {
-      setPlaying(false)
-      return
-    }
-    if (live || c >= axis.span) setC(0)
-    setLive(false)
-    setPlaying(true)
-  }
-  const goLive = () => {
-    setPlaying(false)
-    setLive(true)
-    setC(axis.span)
-  }
-  const B = ZONE.bay
-  const D = ZONE.dock
-  const I = ZONE.intake
-  const S = ZONE.scrap
-  return h(
-    'div',
-    { className: 'wl-fx' },
-    h(
-      'div',
-      { className: 'wl-fx-bar' },
-      h(
-        'div',
-        { className: `wl-pill${live ? '' : ' is-replay'}`, 'data-mode': live ? 'live' : 'replay', role: 'status' },
-        h('i', null),
-        live ? t('wingline.fx.live') : playing ? t('wingline.fx.replay', speed) : t('wingline.fx.paused'),
-        h('span', null, live ? (working ? t('wingline.fx.running', working) : t('wingline.fx.idle')) : working ? t('wingline.fx.working', working) : t('wingline.fx.idle'))
-      ),
-      h('div', { className: 'wl-clock' }, h('small', null, day), h('b', null, time))
-    ),
-    h(
-      'div',
-      { className: 'wl-stagewrap' },
-      h(
-        'div',
-        { className: 'wl-stage' },
-        h(
-          'svg',
-          {
-            className: 'wl-fxsvg',
-            viewBox: '0 0 1600 900',
-            preserveAspectRatio: 'xMidYMid meet',
-            role: 'group',
-            'aria-label': t('wingline.fx.aria'),
-            'data-moving': (live ? working > 0 : playing) ? '1' : '0',
-            'data-jam': nBay ? '1' : '0'
-          },
-          h(
-            'defs',
-            null,
-            h(
-              'pattern',
-              { id: 'wl-hz', width: 14, height: 14, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' },
-              h('rect', { className: 'wl-hz-a', width: 7, height: 14 }),
-              h('rect', { className: 'wl-hz-b', x: 7, width: 7, height: 14 })
-            )
-          ),
-          h('rect', { className: 'wl-floor', x: 26, y: 84, width: 1548, height: 786, rx: 28 }),
-          Array.from({ length: 38 }, (_, i) => h('line', { key: `gx${i}`, className: 'wl-gridline', x1: 66 + i * 40, y1: 114, x2: 66 + i * 40, y2: 866 })),
-          Array.from({ length: 19 }, (_, i) => h('line', { key: `gy${i}`, className: 'wl-gridline', x1: 30, y1: 152 + i * 40, x2: 1570, y2: 152 + i * 40 })),
-          h('path', { className: 'wl-wall', d: 'M26,112 L26,112 Q26,84 54,84 L1546,84 Q1574,84 1574,112 Z' }),
-          Array.from({ length: 8 }, (_, i) => h('rect', { key: `sk${i}`, className: 'wl-sky', x: 120 + i * 170, y: 90, width: 110, height: 16, rx: 5 })),
-          h('rect', { className: 'wl-zone', x: I.x, y: I.y, width: I.w, height: I.h, rx: 18 }),
-          h('rect', { className: 'wl-door', x: 26, y: 380, width: 18, height: 140, rx: 6 }),
-          h('rect', { className: 'wl-dock', x: D.x, y: D.y, width: D.w, height: D.h, rx: 18 }),
-          Array.from({ length: 13 }, (_, i) => h('line', { key: `pl${i}`, className: 'wl-plank', x1: D.x + 4, y1: D.y + 108 + i * 20, x2: D.x + D.w - 4, y2: D.y + 108 + i * 20 })),
-          h('rect', { className: 'wl-zone', x: S.x, y: S.y, width: S.w, height: S.h, rx: 16 }),
-          BELTS.map((b, i) => h('polyline', { key: `bd${i}`, className: 'wl-bed', points: ptsAttr(b) })),
-          BELTS.map((b, i) => h('polyline', { key: `bi${i}`, className: 'wl-bed-in', points: ptsAttr(b) })),
-          BELTS.map((b, i) => h('polyline', { key: `bs${i}`, className: 'wl-slats', points: ptsAttr(b) })),
-          h('polyline', { className: 'wl-redbed', points: ptsAttr(RED_BELT) }),
-          h('polyline', { className: 'wl-redslats', points: ptsAttr(RED_BELT) }),
-          CABLES.map((d, i) => h('path', { key: `cb${i}`, className: 'wl-cable', d })),
-          h('text', { className: 'wl-flabel', x: I.x + 14, y: I.y + 24 }, t('wingline.fx.zone.intake')),
-          h('text', { className: 'wl-flabel', x: 360, y: 156 }, t('wingline.fx.zone.build')),
-          h('text', { className: 'wl-flabel', x: 690, y: 252 }, t('wingline.fx.zone.review')),
-          h('text', { className: 'wl-flabel', x: 1010, y: 266 }, t('wingline.fx.zone.merge')),
-          h('text', { className: 'wl-flabel', x: D.x + 16, y: D.y + 26 }, t('wingline.fx.zone.shipped')),
-          h('text', { className: 'wl-flabel', x: S.x + 14, y: S.y + 22 }, t('wingline.fx.zone.archived')),
-          h('text', { className: 'wl-flabel', x: 410, y: 704 }, t('wingline.fx.zone.investigate')),
-          h(
-            'g',
-            { 'data-bay': nBay },
-            h('rect', { className: `wl-bay${nBay ? ' is-on' : ''}`, x: B.x, y: B.y, width: B.w, height: B.h, rx: 20 }),
-            h('rect', { className: `wl-bay-edge${nBay ? ' is-on' : ''}`, x: B.x + 5, y: B.y + 5, width: B.w - 10, height: B.h - 10, rx: 16 }),
-            nBay ? h('rect', { className: 'wl-ants', x: B.x + 5, y: B.y + 5, width: B.w - 10, height: B.h - 10, rx: 16 }) : null,
-            h('rect', { className: `wl-binhead${nBay ? ' is-on' : ''}`, x: B.x + 20, y: B.y + 18, width: 160, height: 30, rx: 15 }),
-            h('text', { className: 'wl-binhead-t', x: B.x + 34, y: B.y + 38 }, t('wingline.fx.bin', nBay)),
-            nBay ? null : h('text', { className: 'wl-clear', x: B.x + 196, y: B.y + 38 }, t('wingline.fx.clear')),
-            lay.zones.bay.slice(0, CAP.bay).map(task => {
-              const p = lay.pos[task.id]
-              return h('g', { key: `ring-${task.id}` }, h('circle', { className: 'wl-halo', cx: p[0], cy: p[1] + 2, r: 24 }), h('circle', { className: 'wl-ring', cx: p[0], cy: p[1] + 2, r: 22 }))
-            })
-          ),
-          lay.zones.intake.length ? null : h('text', { className: 'wl-clear', x: I.x + I.w / 2, y: I.y + I.h / 2, textAnchor: 'middle' }, t('wingline.fx.queueEmpty')),
-          lay.zones.scrap.length ? null : h('text', { className: 'wl-clear', x: S.x + S.w / 2, y: S.y + 82, textAnchor: 'middle' }, t('wingline.fx.none')),
-          h(
-            'foreignObject',
-            { className: 'wl-fo', x: D.x + 12, y: D.y + 40, width: D.w - 24, height: 58 },
-            h('div', { className: 'wl-sign', 'data-shipped': lay.zones.dock.length }, h('b', null, money(shipped)), h('span', null, t('wingline.fx.crates', lay.zones.dock.length), h('br', null), t('wingline.fx.shipped')))
-          ),
-          MACHINES.map(m => {
-            const o = lay.occ[m.key]
-            const st = o ? o.state : 'idle'
-            const label = o ? (o.state === 'work' ? t('wingline.fx.mWork', nameOf(m), o.task.title) : t('wingline.fx.mJam', nameOf(m), o.task.title)) : t('wingline.fx.mIdle', nameOf(m))
-            return h(
-              'g',
-              {
-                key: m.key,
-                className: 'wl-m',
-                role: 'button',
-                tabIndex: 0,
-                'aria-label': label,
-                'data-machine': m.key,
-                'data-state': st,
-                onClick: () => clickMachine(m),
-                onKeyDown: e => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    clickMachine(m)
-                  }
-                }
-              },
-              h('rect', { className: 'wl-m-focus', x: m.x - m.w / 2 - 8, y: m.y - m.h / 2 - 8, width: m.w + 16, height: m.h + 16, rx: 14 }),
-              h(MachineArt, { m, st, gateIn: m.key === 'gate' ? gateIn : null }),
-              m.kind === 'scan' ? null : h('text', { className: 'wl-mname', x: m.x, y: m.y + m.h / 2 + (m.kind === 'gate' ? 24 : 16), textAnchor: 'middle' }, nameOf(m).toUpperCase())
-            )
-          }),
-          visible.filter(v => v.z !== 'machine').map(v => crate(v.task, v.z)),
-          lay.zones.machine.map(task => crate(task, 'machine')),
-          lay.zones.intake
-            .filter(task => lay.pos[task.id] && (task.parents || []).some(p => lay.zoneOf[p] && lay.zoneOf[p] !== 'dock'))
-            .map(task => {
-              const [x, y] = lay.pos[task.id]
-              return h(
-                'g',
-                { key: `lk-${task.id}`, 'aria-hidden': 'true', style: { pointerEvents: 'none' } },
-                h('circle', { className: 'wl-lock', cx: x + 14, cy: y - 16, r: 8 }),
-                h('path', { className: 'wl-lock-s', d: `M${x + 11.4},${y - 17.5} A2.6,2.6 0 0 1 ${x + 16.6},${y - 17.5}` }),
-                h('rect', { className: 'wl-lock-s', x: x + 10.5, y: y - 17, width: 7, height: 5, style: { fill: 'var(--ui-bg-chrome)', stroke: 'none' } })
-              )
-            }),
-          MACHINES.map(m => {
-            const o = lay.occ[m.key]
-            if (!o) return null
-            const tx = m.kind === 'scan' ? m.x + 96 : m.x
-            const ty = m.kind === 'scan' ? m.y - 24 : m.y - m.h / 2 - 20
-            if (o.state === 'work') {
-              const r = runsOf(o.task).filter(x => x.started_at <= (T ?? now)).pop()
-              const label = o.task.title + (r ? ` · ${fmtDur(t, Math.max(0, (T ?? now) - r.started_at))}` : '') + (o.extra.length ? ` · ${t('wingline.fx.more', o.extra.length)}` : '')
-              return h(Tag, { key: `tag-${m.key}`, x: tx, y: ty, w: m.kind === 'scan' ? 150 : 220, text: label, tone: ROLE_TONE[m.role] })
-            }
-            return h(Tag, { key: `tag-${m.key}`, x: tx, y: ty, w: 190, text: o.state === 'crash' ? t('wingline.fx.jam') : t('wingline.fx.pause'), kind: o.state })
-          }),
-          MACHINES.filter(m => lay.occ[m.key] && lay.occ[m.key].state === 'crash').map(m =>
-            h(
-              'g',
-              { key: `sm-${m.key}`, className: 'wl-smoke', 'data-smoke': m.key, 'aria-hidden': 'true', style: { pointerEvents: 'none' } },
-              h('circle', { cx: m.x - 8, cy: m.y - m.h / 2 - 4, r: 7 }),
-              h('circle', { cx: m.x + 4, cy: m.y - m.h / 2 - 10, r: 6 }),
-              h('circle', { cx: m.x + 14, cy: m.y - m.h / 2 - 2, r: 5 })
-            )
-          ),
-          ['intake', 'dock', 'scrap', 'bay'].map(z =>
-            lay.overflow[z]
-              ? h(
-                  'text',
-                  {
-                    key: `of-${z}`,
-                    className: 'wl-overflow',
-                    x: z === 'dock' ? D.x + D.w - 20 : z === 'bay' ? B.x + B.w - 24 : z === 'intake' ? I.x + I.w - 14 : S.x + S.w - 14,
-                    y: z === 'dock' ? D.y + D.h - 16 : z === 'bay' ? B.y + 38 : z === 'intake' ? I.y + I.h - 14 : S.y + 22,
-                    textAnchor: 'end'
-                  },
-                  t('wingline.fx.more', lay.overflow[z])
-                )
-              : null
-          ),
-          callout
-        )
-      ),
-      drawer
-    ),
-    h(
-      'div',
-      { className: 'wl-ctrl' },
-      h('button', { type: 'button', className: 'wl-play', 'aria-label': playing ? t('wingline.fx.pause') : t('wingline.fx.play'), 'data-ctl': 'play', onClick: toggle }, h(Icon, { name: playing ? 'pause' : 'play', size: 14 })),
-      h(
-        'div',
-        { className: 'wl-seg', role: 'group', 'aria-label': t('wingline.fx.speed') },
-        [1, 4, 16].map(s => h('button', { key: s, type: 'button', 'aria-pressed': speed === s ? 'true' : 'false', 'data-speed': s, onClick: () => setSpeed(s) }, `${s}×`))
-      ),
-      h('span', { className: 'wl-tlab' }, fmtWhen(axis.toR(0))),
-      h('input', {
-        type: 'range',
-        min: 0,
-        max: 1000,
-        step: 1,
-        value: Math.round((Math.min(c, axis.span) / axis.span) * 1000),
-        'aria-label': t('wingline.fx.scrub'),
-        onChange: e => {
-          setPlaying(false)
-          setLive(false)
-          setC((Number(e.target.value) / 1000) * axis.span)
-        }
-      }),
-      h('span', { className: 'wl-tlab' }, h('b', null, fmtWhen(live ? now : T))),
-      h('button', { type: 'button', className: `wl-now${live ? ' is-live' : ''}`, 'data-ctl': 'now', 'aria-label': t('wingline.fx.nowTip'), onClick: goLive }, t('wingline.fx.now'))
-    )
-  )
-}
-
 function planRetry(children) {
   return [
     { key: 'read', state: 'pending' },
@@ -1839,293 +502,289 @@ function planRetry(children) {
   ]
 }
 
-function stepText(step, task, limitText, t) {
-  if (step.key === 'read') return t('wingline.dlg.stepRead', task.id)
-  if (step.key === 'create') return t('wingline.dlg.stepCreate', limitText)
-  if (step.key === 'link') return t('wingline.dlg.stepLink', step.child)
-  if (step.key === 'unlink') return t('wingline.dlg.stepUnlink', task.id, step.child)
-  if (step.key === 'comment') return t('wingline.dlg.stepComment', task.id)
-  return t('wingline.dlg.stepArchive', task.id)
-}
-
 function defaultLimit(task) {
-  const old = isNum(task.max_runtime_seconds) && task.max_runtime_seconds > 0 ? task.max_runtime_seconds : null
+  const old = isNum(task.maxrt) && task.maxrt > 0 ? task.maxrt : null
   return old ? Math.max(1800, Math.round((old * 2) / 1800) * 1800) : 7200
 }
 
-function Dialog({ dlg, setDlg, onRetry, onNote, onArchive, t }) {
-  const firstRef = useRef(null)
-  const busy = dlg.phase === 'running'
-  useEffect(() => {
-    firstRef.current?.focus?.()
-  }, [dlg.kind, dlg.phase])
-  const close = () => {
-    if (!busy) setDlg(null)
+function createApp(root, env) {
+  const t = (key, ...args) => env.t(key, ...args)
+  let D = null
+  let T = []
+  let BY = {}
+  let ST = {}
+  let T0 = Date.now()
+  let LOADERR = null
+  let DIRTY = false
+  let SIG = ''
+  let seq = 0
+  let dead = false
+  let doneLimit = DONE_PAGE
+  let CARD = {}
+  let ANCH = {}
+  let DRAG = null
+  let LINKGEN = 0
+  let EV = []
+  let RANGE = [0, 0]
+  let LAST = 0
+  let RSIG = ''
+  let PI = 0
+  let raf = 0
+  const S = { board: readStore('board', null), view: 'board', sel: null, open: null, q: '', at: null, playing: false, speed: 1800, range: 86400, rail: true, groupOpen: {}, runOpen: {}, noteFor: null, noteMode: null, arm: null, check: null, hover: null, dlg: null, log: null }
+  const seen = readStore(UNREAD_KEY, {})
+  const SEEN = seen && typeof seen === 'object' ? { ...seen } : {}
+  const OV = {}
+  const UNDO = []
+  const PENDING = {}
+  const timers = new Set()
+  const later = (fn, ms) => {
+    const id = window.setTimeout(() => {
+      timers.delete(id)
+      if (!dead) fn()
+    }, ms)
+    timers.add(id)
+    return id
   }
-  const onKey = e => {
-    if (e.key === 'Escape') {
-      e.stopPropagation()
-      close()
-    }
+  const cancel = id => {
+    window.clearTimeout(id)
+    timers.delete(id)
   }
-  const task = dlg.task
-  let body
-  let actions
-  let title
-  if (dlg.kind === 'retry') {
-    title = t('wingline.dlg.retryTitle')
-    const hours = parseFloat(dlg.hours)
-    const okLimit = Number.isFinite(hours) && hours >= 0.5
-    const limitSec = okLimit ? Math.round(hours * 3600) : 0
-    const limitText = okLimit ? fmtDur(t, limitSec) : '—'
-    const old = isNum(task.max_runtime_seconds) && task.max_runtime_seconds > 0 ? task.max_runtime_seconds : null
-    const kids = dlg.steps.filter(s => s.key === 'link')
-    body = h(
-      'div',
-      null,
-      h('p', { className: 'wl-task' }, `${task.id} · ${task.title}`),
-      h('p', { className: 'wl-callnote', 'data-note': 'why' }, t('wingline.dlg.retryWhy')),
-      dlg.phase === 'confirm'
-        ? h(
-            'label',
-            { className: 'wl-field' },
-            t('wingline.dlg.limit'),
-            h('input', {
-              ref: firstRef,
-              className: 'wl-input',
-              type: 'number',
-              min: 0.5,
-              step: 0.5,
-              value: dlg.hours,
-              'data-field': 'limit',
-              onChange: e => setDlg(d => ({ ...d, hours: e.target.value }))
-            }),
-            h('small', null, old ? t('wingline.dlg.limitOld', fmtDur(t, old)) : t('wingline.dlg.limitNone')),
-            okLimit ? null : h('small', { role: 'alert' }, t('wingline.dlg.limitBad'))
-          )
-        : null,
-      h('p', null, t('wingline.dlg.willHappen')),
-      h(
-        'ol',
-        { className: 'wl-steps', 'data-steps': dlg.steps.length },
-        dlg.steps.map((s, i) =>
-          h(
-            'li',
-            { key: `${s.key}-${s.child || ''}-${i}`, 'data-step': s.key, 'data-state': s.state },
-            h('i', { className: `wl-mark is-${s.state}` }),
-            h('span', null, stepText(s, task, dlg.phase === 'confirm' ? limitText : fmtDur(t, dlg.limit), t)),
-            h('span', { className: `wl-st is-${s.state}` }, t(`wingline.dlg.state.${s.state}`)),
-            s.error ? h('span', { className: 'wl-serr', role: 'alert' }, t('wingline.dlg.failed', s.error)) : null
-          )
-        )
-      ),
-      kids.length ? null : h('p', null, t('wingline.dlg.noChildren')),
-      h('p', { className: 'wl-callnote', 'data-note': 'retries' }, t('wingline.dlg.retriesNote')),
-      dlg.newId ? h('p', null, t('wingline.dlg.newId', dlg.newId)) : null,
-      dlg.phase === 'done' ? h('div', { className: 'wl-result', role: 'status' }, t('wingline.dlg.retryOk', dlg.newId)) : null,
-      dlg.phase === 'failed' ? h('div', { className: 'wl-result is-failed', role: 'alert' }, t('wingline.dlg.stoppedAt')) : null
-    )
-    actions =
-      dlg.phase === 'confirm'
-        ? [
-            h(Btn, { key: 'c', id: 'cancel', kind: 'ghost', label: t('wingline.dlg.cancel'), onClick: close }),
-            h(Btn, { key: 'g', id: 'confirm', kind: 'primary', label: t('wingline.dlg.retryGo', limitText), disabled: !okLimit, onClick: () => onRetry(limitSec) })
-          ]
-        : [h(Btn, { key: 'x', id: 'close', label: t('wingline.dlg.close'), disabled: busy, onClick: close })]
-  } else if (dlg.kind === 'note') {
-    title = t('wingline.dlg.noteTitle')
-    body = h(
-      'div',
-      null,
-      h('p', { className: 'wl-task' }, `${task.id} · ${task.title}`),
-      h('p', null, t('wingline.dlg.noteWill', task.id)),
-      h('div', { className: 'wl-quote', 'data-quote': '1' }, dlg.text),
-      dlg.phase === 'done' ? h('div', { className: 'wl-result', role: 'status' }, t('wingline.dlg.noteOk')) : null,
-      dlg.phase === 'failed' ? h('div', { className: 'wl-result is-failed', role: 'alert' }, t('wingline.dlg.failed', dlg.error)) : null
-    )
-    actions =
-      dlg.phase === 'confirm'
-        ? [
-            h(Btn, { key: 'c', id: 'cancel', kind: 'ghost', label: t('wingline.dlg.cancel'), onClick: close }),
-            h('button', { key: 'g', ref: firstRef, type: 'button', className: 'wl-btn is-primary', 'data-act': 'confirm', onClick: onNote }, t('wingline.act.note'))
-          ]
-        : [h(Btn, { key: 'x', id: 'close', label: t('wingline.dlg.close'), disabled: busy, onClick: close })]
-  } else {
-    title = t('wingline.dlg.archiveTitle')
-    body = h(
-      'div',
-      null,
-      h('p', { className: 'wl-task' }, `${task.id} · ${task.title}`),
-      h('p', null, t('wingline.dlg.archiveWill', task.id)),
-      dlg.phase === 'sure' ? h('p', { className: 'wl-callnote', role: 'alert' }, t('wingline.dlg.archiveSecond')) : null,
-      dlg.phase === 'done' ? h('div', { className: 'wl-result', role: 'status' }, t('wingline.dlg.archiveOk')) : null,
-      dlg.phase === 'failed' ? h('div', { className: 'wl-result is-failed', role: 'alert' }, t('wingline.dlg.failed', dlg.error)) : null
-    )
-    actions =
-      dlg.phase === 'confirm'
-        ? [
-            h(Btn, { key: 'c', id: 'cancel', kind: 'ghost', label: t('wingline.dlg.cancel'), onClick: close }),
-            h('button', { key: 'g', ref: firstRef, type: 'button', className: 'wl-btn', 'data-act': 'confirm', onClick: () => setDlg(d => ({ ...d, phase: 'sure' })) }, t('wingline.dlg.archiveNext'))
-          ]
-        : dlg.phase === 'sure'
-          ? [
-              h(Btn, { key: 'c', id: 'cancel', kind: 'ghost', label: t('wingline.dlg.cancel'), onClick: close }),
-              h('button', { key: 'g', ref: firstRef, type: 'button', className: 'wl-btn is-danger', 'data-act': 'confirm', onClick: onArchive }, t('wingline.dlg.archiveSure'))
-            ]
-          : [h(Btn, { key: 'x', id: 'close', label: t('wingline.dlg.close'), disabled: busy, onClick: close })]
-  }
-  return h(
-    'div',
-    {
-      className: 'wl-scrim',
-      onKeyDown: onKey,
-      onClick: e => {
-        if (e.target === e.currentTarget) close()
-      }
-    },
-    h(
-      'div',
-      { className: 'wl-dlg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'wl-dlg-h', 'data-dialog': dlg.kind, 'data-phase': dlg.phase },
-      h('h2', { id: 'wl-dlg-h' }, title),
-      body,
-      h('div', { className: 'wl-dlg-actions' }, actions)
-    )
-  )
-}
+  const $ = s => root.querySelector(s)
+  const $$ = s => [...root.querySelectorAll(s)]
+  const now = () => (S.at != null ? S.at : (D ? D.now : Date.now() / 1000) + (Date.now() - T0) / 1000)
 
-function Page() {
-  const t = usePluginI18n(ID)
-  const [board, setBoard] = useState(() => {
-    const kept = readStore(BOARD_KEY, '')
-    return typeof kept === 'string' ? kept : ''
-  })
-  const [view, setView] = useState(() => (readStore(VIEW_KEY, 'board') === 'factory' ? 'factory' : 'board'))
-  const [data, setData] = useState(null)
-  const [loadErr, setLoadErr] = useState(null)
-  const [updatedAt, setUpdatedAt] = useState(null)
-  const [failures, setFailures] = useState([])
-  const [selId, setSelId] = useState(null)
-  const [fxOpen, setFxOpen] = useState(false)
-  const [filter, setFilter] = useState(null)
-  const [dlg, setDlg] = useState(null)
-  const [notice, setNotice] = useState(null)
-  const [log, setLog] = useState(null)
-  const [note, setNote] = useState('')
-  const seq = useRef(0)
-  const tRef = useRef(t)
-  tRef.current = t
-  const load = useCallback(async () => {
-    const mine = ++seq.current
+  const dur = s => {
+    s = Math.max(0, Math.round(s || 0))
+    if (s < 60) return t('wingline.unit.s', s)
+    if (s < 3600) return t('wingline.unit.m', Math.floor(s / 60))
+    if (s < 86400) return t('wingline.unit.hm', Math.floor(s / 3600), pad(Math.floor((s % 3600) / 60)))
+    return t('wingline.unit.dh', Math.floor(s / 86400), Math.floor((s % 86400) / 3600))
+  }
+  const ago = s => (s < 60 ? t('wingline.justNow') : t('wingline.ago', dur(s).split(' ')[0]))
+  const dhm = ts => {
+    const d = new Date(ts * 1000)
+    const n = new Date(now() * 1000)
+    return (d.toDateString() === n.toDateString() ? '' : `${d.toLocaleDateString('en-GB', { weekday: 'short' })} `) + hm(ts)
+  }
+  const boardName = slug => D?.boards.find(b => b.slug === slug)?.name || slug
+  const stat = r => ST[r] || ST.builder || null
+  const label = x => (x.lens ? t(`wingline.lens.${x.lens}`) : x.labelKind ? t(`wingline.labelKind.${x.labelKind}`, x.label) : x.label)
+  const lensName = x => (LENSES.includes(x.step) ? t(`wingline.lensShort.${x.step}`) : x.step)
+  const pipeName = p => String(p).replace(/ r\d+$/, '').replace(/[-_]/g, ' ').replace(/^./, c => c.toUpperCase())
+  const plainAct = x => {
+    x = String(x || '').replace(/^▸\s*/, '')
+    return /context compression/i.test(x) ? t('wingline.card.tidy') : x
+  }
+  const outWord = o => t(`wingline.out.${['completed', 'crashed', 'timed_out', 'blocked', 'rate_limited', 'gave_up', 'reclaimed', 'running'].includes(o) ? o : 'other'}`)
+
+  function facts(story) {
+    const f = story.facts || {}
+    return {
+      ...f,
+      worked: dur(f.worked),
+      limit: dur(f.limit),
+      into: dur(f.into),
+      silentFor: dur(f.silentFor),
+      lastLife: isNum(f.lastLife) ? hm(f.lastLife) : '',
+      tries: f.tries || 1,
+      allowed: f.allowed || 1
+    }
+  }
+  const causeOf = x => (x.story && CAUSES.includes(x.story.cause) ? x.story.cause : null)
+  const tlText = x => {
+    const args = (x.a || []).map((v, i) => ((DUR_ARGS[x.k] || []).includes(i) ? dur(v) : v))
+    return t(`wingline.tl.${x.k}`, ...args)
+  }
+
+  function setData(d) {
+    D = d
+    T = d.tasks.filter(x => x && typeof x.id === 'string').map(x => ({ ...x, runs: Array.isArray(x.runs) ? x.runs : [], parents: x.parents || [], children: x.children || [] }))
+    BY = Object.fromEntries(T.map(x => [x.id, x]))
+    ST = d.stats || {}
+    T0 = Date.now()
+    for (const id of Object.keys(OV)) {
+      const x = BY[id]
+      if (!x || OV[id].sent || (OV[id].from && x.status !== OV[id].from)) delete OV[id]
+    }
+    if (!D.boards.some(b => b.slug === S.board)) S.board = null
+  }
+
+  function state(x) {
+    if (x.status === 'archived' && !OV[x.id]) return { k: 'gone' }
+    const at = now()
+    const o = S.at == null ? OV[x.id] : null
+    if (o) return o
+    const ended = x.runs.filter(r => r.e)
+    const lastEnd = ended[ended.length - 1]
+    if (S.at == null) {
+      if (x.status === 'done') return { k: 'done', since: x.done }
+      if (x.status === 'running') {
+        const r = x.runs[x.runs.length - 1]
+        return { k: 'working', since: r ? r.s : x.created, run: r }
+      }
+      if (x.status === 'blocked' || x.status === 'review') return { k: 'needs', since: lastEnd ? lastEnd.e : x.created, why: x.reason }
+      return { k: 'queued', since: lastEnd ? lastEnd.e : x.created }
+    }
+    if (at < x.created) return { k: 'absent' }
+    if (x.done && x.done <= at) return { k: 'done', since: x.done }
+    for (const r of x.runs) if (r.s <= at && (!r.e || at < r.e)) return { k: 'working', since: r.s, run: r }
+    const before = x.runs.filter(r => r.e && r.e <= at)
+    const last = before[before.length - 1]
+    if (last && last.o !== 'completed') {
+      const again = x.runs.some(r => r.s > last.e)
+      if (last.o === 'blocked') return { k: 'needs', since: last.e, why: last.err || x.reason }
+      if (!again && x.status === 'blocked') return { k: 'needs', since: last.e, why: x.reason || last.err }
+    }
+    return { k: 'queued', since: last ? last.e : x.created }
+  }
+  const boardTasks = b => T.filter(x => x.board === b && state(x).k !== 'gone')
+  function counts(b) {
+    const c = { needs: 0, working: 0, queued: 0, done: 0, usd: 0 }
+    for (const x of boardTasks(b)) {
+      const k = state(x).k
+      if (c[k] != null) c[k]++
+      if (k !== 'absent') c.usd += x.usd || 0
+    }
+    return c
+  }
+  const pipeOf = x => T.filter(y => y.board === x.board && y.pipe === x.pipe).sort((a, b) => (ROLEO[a.role] ?? 1) - (ROLEO[b.role] ?? 1) || a.created - b.created)
+  const needsAll = () => T.filter(x => state(x).k === 'needs')
+  function waitText(x) {
+    const ps = x.parents.map(id => BY[id]).filter(Boolean)
+    const open = ps.filter(p => state(p).k !== 'done')
+    if (!open.length) return null
+    if (ps.length === 1) return [t('wingline.card.waitsFor'), el('b', null, label(ps[0]))]
+    return [t('wingline.card.waitsFor'), el('b', null, t('wingline.card.waitsMany', open.length, ps.length))]
+  }
+  function matches(x) {
+    if (!S.q) return true
+    return `${x.title} ${x.reason} ${x.outcome} ${label(x)}`.toLowerCase().includes(S.q.toLowerCase())
+  }
+
+  function toast(msg, act, bad) {
+    const box = $('.wl-toasts')
+    if (!box) return
+    const node = el('div', { class: `toast${bad ? ' bad' : ''}`, role: bad ? 'alert' : 'status' }, el('div', null, msg), act && el('button', { class: 'btn', 'data-act': 'undo', onclick: () => { node.remove(); act() } }, t('wingline.toast.undo'), el('span', { class: 'kbd' }, 'Ctrl Z')))
+    box.append(node)
+    while (box.children.length > 3) box.firstChild.remove()
+    later(() => {
+      node.style.transition = 'opacity .4s'
+      node.style.opacity = 0
+      later(() => node.remove(), 400)
+    }, act ? UNDO_MS : bad ? 9000 : 4200)
+  }
+  function fail(what, err) {
+    console.warn(`[${ID}] ${what} failed`, err)
+    toast(t('wingline.toast.failed', what, errText(err)), null, true)
+  }
+
+  async function runAgain(id, note, reply) {
+    const x = BY[id]
+    if (!x) return
+    const text = (note || '').trim()
+    S.noteFor = null
+    OV[id] = { k: 'queued', since: now(), note: text || null, from: x.status }
+    render()
     try {
-      if (!ctxRef || typeof ctxRef.rest !== 'function') throw new Error(tRef.current('wingline.err.noRest'))
-      const res = await ctxRef.rest(`/overview${board ? `?board=${enc(board)}` : ''}`)
-      if (mine !== seq.current) return
-      if (!res || !Array.isArray(res.tasks)) throw new Error(tRef.current('wingline.err.shape'))
-      setData(res)
-      setLoadErr(null)
-      setUpdatedAt(Date.now())
+      if (text) await kanbanCall(`/tasks/${enc(id)}/comments`, x.board, { method: 'POST', body: { body: text, author: 'wingline' } })
+      const res = await kanbanCall(`/tasks/${enc(id)}`, x.board, { method: 'PATCH', body: { status: 'ready' } })
+      if (res?.task && res.task.status === x.status) throw new Error(t('wingline.err.refused'))
+      if (OV[id]) OV[id].sent = true
+      toast(reply ? t('wingline.toast.replied', label(x)) : text ? t('wingline.toast.againNote', label(x)) : t('wingline.toast.again', label(x)))
     } catch (err) {
-      if (mine !== seq.current) return
-      console.warn(`[${ID}] reading the overview failed`, err)
-      setLoadErr(errText(err))
+      delete OV[id]
+      fail(reply ? t('wingline.toast.actReply') : t('wingline.toast.actAgain'), err)
     }
-  }, [board])
-  useEffect(() => {
-    const tick = () => {
-      if (document.visibilityState !== 'hidden') load()
-    }
-    tick()
-    const timer = window.setInterval(tick, POLL_MS)
-    const onVis = () => {
-      if (document.visibilityState === 'visible') load()
-    }
-    document.addEventListener('visibilitychange', onVis)
-    return () => {
-      window.clearInterval(timer)
-      document.removeEventListener('visibilitychange', onVis)
-    }
-  }, [load])
-  useEffect(() => {
-    if (!notice) return undefined
-    const id = window.setTimeout(() => setNotice(null), 6000)
-    return () => window.clearTimeout(id)
-  }, [notice])
-  const tasks = useMemo(() => (data && Array.isArray(data.tasks) ? data.tasks.filter(x => x && typeof x.id === 'string') : []), [data])
-  const now = data && isNum(data.now) ? data.now : Date.now() / 1000
-  const byId = useMemo(() => new Map(tasks.map(x => [x.id, x])), [tasks])
-  const axis = useMemo(() => buildAxis(tasks, now), [tasks, now])
-  const blocked = tasks.filter(x => x.status === 'blocked')
-  const running = tasks.filter(x => x.status === 'running')
-  const fallbackSel = (blocked[0] || running[0] || tasks[0] || {}).id || null
-  const selected = byId.get(selId) || byId.get(fallbackSel) || null
-  const boardSlug = data?.board || board
-  const fail = useCallback((source, err) => {
-    console.warn(`[${ID}] ${source} failed`, err)
-    setFailures(f => [...f.slice(-5), { id: `${Date.now()}-${f.length}`, source, message: errText(err) }])
-  }, [])
-  const select = useCallback(id => {
-    setSelId(id)
-    setFxOpen(true)
-  }, [])
-  const pickView = v => {
-    setView(v)
-    writeStore(VIEW_KEY, v)
+    render()
+    load()
   }
-  const pickBoard = slug => {
-    setBoard(slug)
-    writeStore(BOARD_KEY, slug)
-    setData(null)
-    setSelId(null)
-    setLog(null)
-  }
-  const openLog = task => {
-    setLog({ id: task.id, loading: true })
-    kanbanCall(`/tasks/${enc(task.id)}/log?tail=${LOG_TAIL}`, boardSlug)
-      .then(res => setLog({ id: task.id, loading: false, exists: res?.exists !== false, content: stripAnsi(res?.content || ''), truncated: !!res?.truncated }))
-      .catch(err => {
-        setLog({ id: task.id, loading: false, error: errText(err) })
-        fail(t('wingline.act.log'), err)
-      })
-  }
-  const askInChat = async task => {
-    const text = t('wingline.chat.prompt', task.id, task.title, boardSlug, t(`wingline.status.${statusKey(task.status)}`), task.status === 'blocked' ? reasonOf(task, t) : '')
-    let placed = false
-    try {
-      placed = !!(await host?.composer?.insertText?.(null, text))
-    } catch (err) {
-      console.warn(`[${ID}] the chat composer refused the question`, err)
-    }
-    if (placed) {
-      setNotice(t('wingline.chat.inserted'))
+
+  async function tell(id, text) {
+    const x = BY[id]
+    S.noteFor = null
+    if (!x || !text.trim()) {
+      render()
       return
     }
+    render()
     try {
-      await navigator.clipboard.writeText(text)
-      setNotice(t('wingline.chat.copied'))
+      await kanbanCall(`/tasks/${enc(id)}/comments`, x.board, { method: 'POST', body: { body: text.trim(), author: 'wingline' } })
+      toast(t('wingline.toast.told'))
     } catch (err) {
-      fail(t('wingline.act.chat'), err)
-      setNotice(t('wingline.chat.failed'))
+      fail(t('wingline.toast.actTell'), err)
     }
+    load()
   }
-  const onAction = (kind, task) => {
-    if (kind === 'retry') {
-      setDlg({ kind: 'retry', task, phase: 'confirm', hours: String(defaultLimit(task) / 3600), steps: planRetry((task.children || []).slice()) })
-    } else if (kind === 'archive') setDlg({ kind: 'archive', task, phase: 'confirm' })
-    else if (kind === 'note') {
-      if (note.trim()) setDlg({ kind: 'note', task, phase: 'confirm', text: note.trim() })
-    } else if (kind === 'log') openLog(task)
-    else if (kind === 'log-close') setLog(null)
-    else if (kind === 'kanban') host?.navigate?.('/kanban')
-    else if (kind === 'chat') askInChat(task)
+
+  function remove(id) {
+    if (S.arm !== id) {
+      S.arm = id
+      render()
+      later(() => {
+        if (S.arm === id) {
+          S.arm = null
+          render()
+        }
+      }, 3000)
+      return
+    }
+    const x = BY[id]
+    S.arm = null
+    OV[id] = { k: 'gone', from: x.status }
+    if (S.open === id) closeDrawer()
+    const undo = () => {
+      cancel(PENDING[id])
+      delete PENDING[id]
+      delete OV[id]
+      render()
+      toast(t('wingline.toast.undone'))
+    }
+    PENDING[id] = later(() => commitRemove(id), UNDO_MS)
+    UNDO.push({ id, fn: undo })
+    render()
+    toast(t('wingline.toast.removing', label(x)), undo)
   }
-  const runRetry = async limit => {
-    const task = dlg.task
-    const slug = boardSlug
+  async function commitRemove(id) {
+    delete PENDING[id]
+    const x = BY[id]
+    if (!x) return
+    try {
+      const res = await kanbanCall(`/tasks/${enc(id)}`, x.board, { method: 'PATCH', body: { status: 'archived' } })
+      if (res?.task && res.task.status !== 'archived') throw new Error(t('wingline.err.refused'))
+      if (OV[id]) OV[id].sent = true
+      if (!dead) toast(t('wingline.toast.removed', label(x)))
+    } catch (err) {
+      delete OV[id]
+      if (!dead) {
+        fail(t('wingline.toast.actRemove'), err)
+        render()
+      } else console.warn(`[${ID}] removing ${id} failed`, err)
+    }
+    if (!dead) load()
+  }
+  function undo() {
+    const u = UNDO.pop()
+    if (u && PENDING[u.id]) u.fn()
+  }
+
+  function openRetry(id) {
+    const x = BY[id]
+    S.dlg = { task: x, phase: 'confirm', hours: String(defaultLimit(x) / 3600), steps: planRetry(x.children.slice()) }
+    renderDialog()
+  }
+  async function runRetry(limit) {
+    const dlg = S.dlg
+    const x = dlg.task
     let steps = dlg.steps.map(s => ({ ...s, state: 'pending', error: undefined }))
-    const push = patch => setDlg(d => (d && d.task.id === task.id ? { ...d, ...patch } : d))
     let i = 0
-    const mark = (state, error) => {
-      steps = steps.map((s, k) => (k === i ? { ...s, state, error } : s))
+    const push = patch => {
+      if (S.dlg && S.dlg.task.id === x.id) {
+        Object.assign(S.dlg, patch)
+        renderDialog()
+      }
+    }
+    const mark = (st, error) => {
+      steps = steps.map((s, k) => (k === i ? { ...s, state: st, error } : s))
       push({ steps })
     }
     const step = async fn => {
@@ -2142,19 +801,19 @@ function Page() {
     }
     push({ phase: 'running', limit, steps })
     try {
-      const detail = await step(() => kanbanCall(`/tasks/${enc(task.id)}`, slug))
+      const detail = await step(() => kanbanCall(`/tasks/${enc(x.id)}`, x.board))
       const src = detail?.task || {}
-      const kids = Array.isArray(detail?.links?.children) ? detail.links.children : task.children || []
-      const parents = Array.isArray(detail?.links?.parents) ? detail.links.parents : task.parents || []
+      const kids = Array.isArray(detail?.links?.children) ? detail.links.children : x.children
+      const parents = Array.isArray(detail?.links?.parents) ? detail.links.parents : x.parents
       steps = [steps[0], ...planRetry(kids).slice(1)]
       push({ steps })
       const newId = await step(async () => {
-        const res = await kanbanCall('/tasks', slug, {
+        const res = await kanbanCall('/tasks', x.board, {
           method: 'POST',
           body: {
-            title: src.title ?? task.title,
+            title: src.title ?? x.title,
             body: src.body ?? null,
-            assignee: src.assignee ?? task.assignee ?? null,
+            assignee: src.assignee ?? x.assignee ?? null,
             tenant: src.tenant ?? null,
             priority: isNum(src.priority) ? src.priority : 0,
             parents,
@@ -2170,166 +829,1651 @@ function Page() {
             max_runtime_seconds: limit
           }
         })
-        const id = res?.task?.id
-        if (!id) throw new Error(t('wingline.err.noId'))
-        return id
+        const nid = res?.task?.id
+        if (!nid) throw new Error(t('wingline.err.noId'))
+        return nid
       })
       push({ newId })
       for (const child of kids) {
-        await step(() => kanbanCall('/links', slug, { method: 'POST', body: { parent_id: newId, child_id: child } }))
+        await step(() => kanbanCall('/links', x.board, { method: 'POST', body: { parent_id: newId, child_id: child } }))
         await step(async () => {
-          const res = await kanbanCall(`/links?parent_id=${enc(task.id)}&child_id=${enc(child)}`, slug, { method: 'DELETE' })
+          const res = await kanbanCall(`/links?parent_id=${enc(x.id)}&child_id=${enc(child)}`, x.board, { method: 'DELETE' })
           if (res && res.ok === false) throw new Error(t('wingline.err.refused'))
         })
       }
-      await step(() => kanbanCall(`/tasks/${enc(task.id)}/comments`, slug, { method: 'POST', body: { body: t('wingline.dlg.retryComment', newId, fmtDur(t, limit)), author: 'wingline' } }))
+      await step(() => kanbanCall(`/tasks/${enc(x.id)}/comments`, x.board, { method: 'POST', body: { body: t('wingline.dlg.retryComment', newId, dur(limit)), author: 'wingline' } }))
       await step(async () => {
-        const res = await kanbanCall(`/tasks/${enc(task.id)}`, slug, { method: 'PATCH', body: { status: 'archived' } })
+        const res = await kanbanCall(`/tasks/${enc(x.id)}`, x.board, { method: 'PATCH', body: { status: 'archived' } })
         if (res?.task && res.task.status !== 'archived') throw new Error(t('wingline.err.refused'))
       })
       push({ phase: 'done' })
-      setSelId(newId)
     } catch (err) {
-      fail(t('wingline.act.retry'), err)
+      fail(t('wingline.toast.actMore'), err)
       push({ phase: 'failed' })
     }
     load()
   }
-  const runNote = async () => {
-    const { task, text } = dlg
-    setDlg(d => ({ ...d, phase: 'running' }))
-    try {
-      await kanbanCall(`/tasks/${enc(task.id)}/comments`, boardSlug, { method: 'POST', body: { body: text, author: 'wingline' } })
-      setDlg(d => ({ ...d, phase: 'done' }))
-      setNote('')
-    } catch (err) {
-      fail(t('wingline.act.note'), err)
-      setDlg(d => ({ ...d, phase: 'failed', error: errText(err) }))
-    }
-    load()
+  function stepText(s, x, limitText) {
+    if (s.key === 'read') return t('wingline.dlg.stepRead', x.id)
+    if (s.key === 'create') return t('wingline.dlg.stepCreate', limitText)
+    if (s.key === 'link') return t('wingline.dlg.stepLink', s.child)
+    if (s.key === 'unlink') return t('wingline.dlg.stepUnlink', x.id, s.child)
+    if (s.key === 'comment') return t('wingline.dlg.stepComment', x.id)
+    return t('wingline.dlg.stepArchive', x.id)
   }
-  const runArchive = async () => {
-    const { task } = dlg
-    setDlg(d => ({ ...d, phase: 'running' }))
-    try {
-      const res = await kanbanCall(`/tasks/${enc(task.id)}`, boardSlug, { method: 'PATCH', body: { status: 'archived' } })
-      if (res?.task && res.task.status !== 'archived') throw new Error(t('wingline.err.refused'))
-      setDlg(d => ({ ...d, phase: 'done' }))
-    } catch (err) {
-      fail(t('wingline.act.archive'), err)
-      setDlg(d => ({ ...d, phase: 'failed', error: errText(err) }))
+  function renderDialog() {
+    const sc = $('.scrim')
+    const d = S.dlg
+    if (!d) {
+      sc.classList.remove('on')
+      return
     }
-    load()
+    const x = d.task
+    const hours = parseFloat(d.hours)
+    const okLimit = isNum(hours) && hours >= 0.5
+    const limit = okLimit ? Math.round(hours * 3600) : null
+    const limitText = d.limit ? dur(d.limit) : limit ? dur(limit) : '—'
+    const input = el('input', { class: 'lim', 'data-field': 'limit', type: 'number', min: '0.5', step: '0.5', value: d.hours, disabled: d.phase !== 'confirm', oninput: e => { d.hours = e.target.value; renderDialog(); const n = $('.lim'); if (n) { n.focus(); n.setSelectionRange?.(n.value.length, n.value.length) } } })
+    const box = el('div', { class: 'dlg', role: 'dialog', 'aria-modal': 'true', 'data-dialog': 'retry', 'data-phase': d.phase, onclick: e => e.stopPropagation() },
+      el('h3', null, t('wingline.dlg.retryTitle')), el('div', { class: 'dsub' }, label(x)),
+      el('p', null, t('wingline.dlg.retryWhy')),
+      el('label', { class: 'limrow' }, t('wingline.dlg.limit'), input),
+      el('div', { class: 'sub' }, x.maxrt ? t('wingline.dlg.limitOld', dur(x.maxrt)) : t('wingline.dlg.limitNone')),
+      !okLimit && d.phase === 'confirm' && el('div', { class: 'cwarn' }, t('wingline.dlg.limitBad')),
+      el('div', { class: 'sub' }, t('wingline.dlg.willHappen')),
+      el('ol', { class: 'steps' }, d.steps.map(s => el('li', { 'data-step': s.key, 'data-state': s.state }, el('span', null, stepText(s, x, limitText)), el('b', null, t(`wingline.dlg.state.${s.state}`)), s.error && el('code', null, s.error)))),
+      el('div', { class: 'sub' }, t('wingline.dlg.retriesNote')),
+      d.phase === 'done' && el('div', { class: 'cans' }, t('wingline.dlg.retryOk', d.newId)),
+      d.phase === 'failed' && el('div', { class: 'cans bad' }, t('wingline.dlg.stoppedAt')),
+      el('div', { class: 'acts' },
+        d.phase === 'confirm' && el('button', { class: 'btn go', 'data-act': 'confirm', disabled: !okLimit, onclick: () => runRetry(limit) }, t('wingline.dlg.retryGo', limitText)),
+        el('button', { class: 'btn', 'data-act': 'close', disabled: d.phase === 'running', onclick: closeScrim }, d.phase === 'confirm' ? t('wingline.dlg.cancel') : t('wingline.dlg.close'))))
+    sc.replaceChildren(box)
+    sc.classList.add('on')
   }
-  const totals = data?.totals || {}
-  const counters = [
-    { k: 'needs', v: totals.needs_you, tone: 'var(--ui-yellow)', alert: (totals.needs_you || 0) > 0 },
-    { k: 'working', v: totals.working, tone: 'var(--ui-accent)' },
-    { k: 'queued', v: totals.queued, tone: 'var(--ui-text-tertiary)' },
-    { k: 'done', v: totals.done, tone: 'var(--ui-green)' }
-  ]
-  const problems = [
-    ...(loadErr ? [{ id: 'overview', source: t('wingline.problems.overview'), message: loadErr }] : []),
-    ...(Array.isArray(data?.errors) ? data.errors : []).map((e, i) => ({ id: `be-${i}`, source: t('wingline.problems.backend', String(e?.source || '')), message: String(e?.message || '') })),
-    ...failures
-  ]
-  const boards = Array.isArray(data?.boards) ? data.boards : []
-  const drawerProps = { task: selected, byId, now, t, onAction, log, note, setNote }
-  let content
-  if (!data) {
-    content = loadErr
-      ? h('div', { className: 'wl-state', role: 'alert' }, loadErr, h(Btn, { id: 'reload', icon: 'retry', label: t('wingline.tryAgain'), onClick: () => load() }))
-      : h('div', { className: 'wl-state', role: 'status' }, t('wingline.loading'))
-  } else if (!tasks.length) {
-    content = h('div', { className: 'wl-state' }, t('wingline.empty'))
-  } else if (view === 'factory') {
-    content = h(Factory, {
-      tasks,
-      now,
-      axis,
-      selId: fxOpen ? selected?.id : null,
-      onSelect: select,
-      onNotice: setNotice,
-      t,
-      drawer: fxOpen && selected ? h(Drawer, { ...drawerProps, className: 'wl-fx-dr', onClose: () => setFxOpen(false) }) : null
-    })
-  } else {
-    content = h(
-      'div',
-      { className: 'wl-board' },
-      h(
-        'main',
-        { className: 'wl-main' },
-        h(NeedsYou, { list: blocked, selId: selected?.id, onSelect: setSelId, onAction, now, t }),
-        h(WorkingNow, { list: running, tasks, selId: selected?.id, onSelect: setSelId, now, t }),
-        h(Pipeline, { tasks, selId: selected?.id, onSelect: setSelId, now, t }),
-        h(Timeline, { tasks, axis, selId: selected?.id, onSelect: setSelId, filter, now, t })
-      ),
-      h(Drawer, drawerProps)
+
+  function renderRail() {
+    const rail = $('.rail')
+    rail.replaceChildren()
+    const nAll = needsAll()
+    rail.append(
+      el('div', { class: 'brand' }, el('div', { class: 'logo' }, 'W'), el('b', null, t('wingline.title')), el('button', { class: 'kbtn', title: t('wingline.rail.searchTitle'), onclick: openPalette }, t('wingline.rail.search'), el('span', { class: 'kbd' }, '/'))),
+      el('button', { class: `attn${nAll.length ? '' : ' zero'}`, 'data-attn': nAll.length, onclick: () => setView('inbox') }, el('i', { class: 'dot' }), nAll.length ? t('wingline.rail.decisions', nAll.length) : t('wingline.rail.nothing'), el('span', { class: 'n' }, nAll.length || '')),
+      el('div', { class: 'sec' }, el('span', null, t('wingline.rail.boards')), el('span', null, D.boards.length))
     )
+    const bl = el('div', { class: 'boards' })
+    for (const b of D.boards) {
+      const c = counts(b.slug)
+      const seg = el('div', { class: 'seg' })
+      for (const [k, col] of COLS) if (c[k]) seg.append(el('i', { style: `flex:${c[k]};background:${col}` }))
+      const badge = c.needs ? el('span', { class: 'bd red' }, c.needs) : c.working ? el('span', { class: 'spin' }) : el('span', { class: 'bd' }, usd(c.usd))
+      bl.append(el('button', { class: `brow${b.slug === S.board ? ' on' : ''}${c.needs || c.working || c.queued ? '' : ' quiet'}`, 'data-board': b.slug, onclick: () => setBoard(b.slug), title: b.name }, el('span', { class: 'nm' }, b.name), badge, seg))
+    }
+    const live = T.filter(x => state(x).k === 'working')
+    const al = el('div', { class: 'agents' })
+    if (!live.length) al.append(el('div', { class: 'agent none' }, t('wingline.rail.noAgent')))
+    for (const x of live) {
+      const s = state(x)
+      al.append(el('button', { class: 'agent', onclick: () => { setBoard(x.board); select(`t:${x.id}`); openDrawer(x.id) } }, el('span', { class: 'spin' }), el('span', { class: 't' }, x.title), el('span', { class: 'tm', 'data-since': s.since }, dur(now() - s.since)), el('span', { class: 'a', 'data-live': x.id }, `▸ ${S.at == null && x.act ? plainAct(x.act.text) : t('wingline.rail.working')}`)))
+    }
+    const errs = Array.isArray(D.errors) ? D.errors : []
+    rail.append(bl, el('div', { class: 'sec' }, el('span', null, t('wingline.rail.agents')), el('span', null, live.length)), al,
+      el('div', { class: 'rfoot' }, el('span', { 'data-updated': '1' }, t('wingline.rail.live', hm(Date.now() / 1000, 1))),
+        errs.length || LOADERR ? el('div', { class: 'probs', role: 'alert' }, LOADERR || t('wingline.rail.problems', errs.length), errs.map(e => el('div', null, el('b', null, String(e?.source || '')), `: ${String(e?.message || '')}`))) : null))
   }
-  return h(
-    'div',
-    { className: 'wl-root', 'data-view': view },
-    h('style', null, CSS),
-    h(
-      'header',
-      { className: 'wl-top' },
-      h('div', { className: 'wl-brand' }, h('h1', null, t('wingline.title')), h('span', null, t('wingline.subtitle'))),
-      h(
-        'select',
-        { className: 'wl-select', 'aria-label': t('wingline.boardPick'), value: boardSlug || '', onChange: e => pickBoard(e.target.value) },
-        boards.length
-          ? boards.map(b => h('option', { key: b.slug, value: b.slug }, b.name || b.slug))
-          : h('option', { value: boardSlug || '' }, boardSlug || '—')
-      ),
-      h(
-        'div',
-        { className: 'wl-seg', role: 'group', 'aria-label': t('wingline.view.label') },
-        ['board', 'factory'].map(v => h('button', { key: v, type: 'button', 'data-view': v, 'aria-pressed': view === v ? 'true' : 'false', onClick: () => pickView(v) }, t(`wingline.view.${v}`)))
-      ),
-      h(
-        'div',
-        { className: 'wl-counts' },
-        counters.map(c =>
-          h(
-            'button',
-            {
-              key: c.k,
-              type: 'button',
-              className: `wl-count${c.alert ? ' is-alert' : ''}`,
-              'data-count': c.k,
-              'aria-pressed': filter === c.k ? 'true' : 'false',
-              'aria-label': `${t(`wingline.count.${c.k}`)}: ${isNum(c.v) ? c.v : '—'}. ${t('wingline.count.filter', t(`wingline.count.${c.k}`))}`,
-              onClick: () => setFilter(f => (f === c.k ? null : c.k))
-            },
-            h('span', { className: 'wl-dot', style: { background: c.tone } }),
-            h('b', null, isNum(c.v) ? String(c.v) : '—'),
-            h('span', null, t(`wingline.count.${c.k}`))
-          )
-        ),
-        h('span', { className: 'wl-count is-static', 'data-count': 'spend' }, h(Icon, { name: 'coin' }), h('b', null, isNum(totals.spend_usd) ? money(totals.spend_usd) : '—'), h('span', null, t('wingline.count.spend')))
-      ),
-      updatedAt ? h('span', { className: 'wl-updated' }, t('wingline.updated', new Date(updatedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }))) : null
-    ),
-    problems.length
-      ? h(
-          'div',
-          { className: 'wl-problems', role: 'alert' },
-          h(
-            'div',
-            { className: 'wl-problems-head' },
-            h(Icon, { name: 'alert' }),
-            t('wingline.problems.title', problems.length),
-            failures.length ? h(Btn, { id: 'dismiss', kind: 'ghost', label: t('wingline.problems.dismiss'), onClick: () => setFailures([]) }) : null
-          ),
-          h('ul', null, problems.map(p => h('li', { key: p.id }, h('b', null, p.source), `: ${p.message}`)))
-        )
-      : null,
-    content,
-    dlg ? h(Dialog, { dlg, setDlg, onRetry: runRetry, onNote: runNote, onArchive: runArchive, t }) : null,
-    notice ? h('div', { className: 'wl-notice', role: 'status' }, h(Icon, { name: 'info' }), h('span', null, notice)) : null
-  )
+
+  function renderTop() {
+    const b = D.boards.find(x => x.slug === S.board)
+    const c = counts(S.board)
+    const top = $('.tbar')
+    const tab = (v, n, red) => el('button', { class: S.view === v ? 'on' : '', 'data-view': v, onclick: () => setView(v) }, t(`wingline.view.${v}`), n != null && el('span', { class: `c${red ? ' red' : ''}` }, n))
+    const inN = needsAll().length
+    let srch = $('.search')
+    if (!srch) {
+      srch = el('label', { class: 'search' }, icon('search'), el('input', { id: 'wl-q', placeholder: t('wingline.top.filter'), oninput: e => { S.q = e.target.value; renderView() } }), el('span', { class: 'kbd' }, 'F'))
+    }
+    top.replaceChildren(el('h1', null, b ? b.name : ''), el('span', { class: 'meta' }, t('wingline.top.meta', c.needs + c.working + c.queued + c.done, usd(c.usd))),
+      el('div', { class: 'tabs' }, tab('board'), tab('list'), tab('inbox', inN || null, inN > 0)), srch,
+      S.at == null ? el('span', { class: 'live', title: t('wingline.top.clockTitle') }, el('i'), el('span', { 'data-clock': '1' }, hm(now(), 1))) : el('span', { class: 'live rp' }, el('i'), t('wingline.top.replaying')),
+      el('button', { class: 'rbtn', 'data-act': 'replay', onclick: toggleReplay, title: t('wingline.top.replayTitle') }, icon(S.at == null ? 'rewind' : 'bolt'), S.at == null ? t('wingline.top.replay') : t('wingline.top.goLive')))
+  }
+
+  const ageEl = s => el('span', { class: 'age', 'data-since': s.since }, dur(now() - s.since))
+  const pchip = x => el('span', { class: 'pchip' }, el('i', { style: `background:${hue(x.pipe)}` }), x.pipe)
+
+  function noteBox(x) {
+    const mode = S.noteMode
+    const quiet = x.act ? now() - x.act.at : 0
+    const go = () => {
+      const v = ta.value
+      if (mode === 'tell') tell(x.id, v)
+      else if (mode === 'reply') {
+        if (!v.trim()) {
+          ta.classList.add('shake')
+          later(() => ta.classList.remove('shake'), 400)
+          return
+        }
+        runAgain(x.id, v, true)
+      } else runAgain(x.id, v)
+    }
+    const ta = el('textarea', { placeholder: t(`wingline.note.${mode}`), 'aria-label': t(`wingline.note.${mode}`), onkeydown: e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go() } if (e.key === 'Escape') { e.stopPropagation(); S.noteFor = null; render() } } })
+    later(() => ta.isConnected && ta.focus(), 30)
+    const hint = mode === 'tell' && quiet > QUIET ? el('div', { class: 'cwarn' }, t('wingline.note.silent', dur(quiet))) : el('div', { class: 'chint' }, mode === 'tell' ? t('wingline.note.hintTell') : mode === 'reply' ? t('wingline.note.hintReply') : t('wingline.note.hintAgain'))
+    const goLabel = mode === 'tell' ? t('wingline.act.send') : mode === 'reply' ? t('wingline.note.goReply') : t('wingline.note.goAgain')
+    return el('div', { class: 'note', 'data-note': mode, onclick: e => e.stopPropagation() }, ta, hint,
+      el('div', { class: 'acts' }, el('button', { class: 'btn go', 'data-act': 'send', onclick: go }, goLabel, el('span', { class: 'kbd' }, '↵')), el('button', { class: 'btn', 'data-act': 'cancel', onclick: () => { S.noteFor = null; render() } }, t('wingline.act.cancel'))))
+  }
+  const openNote = (id, mode) => {
+    S.noteFor = id
+    S.noteMode = mode
+    render()
+  }
+
+  function needActions(x, big) {
+    if (S.noteFor === x.id) return noteBox(x)
+    const cause = causeOf(x)
+    const armed = S.arm === x.id
+    const stop = fn => e => {
+      e.stopPropagation()
+      fn()
+    }
+    const rm = el('button', { class: `btn ${armed ? 'arm' : 'no'}`, 'data-act': 'remove', title: t('wingline.act.removeTitle'), onclick: stop(() => remove(x.id)) }, armed ? t('wingline.act.removeSure') : t('wingline.act.remove'))
+    if (cause === 'review') return el('div', { class: `acts${big ? ' big' : ''}` }, el('button', { class: 'btn go', 'data-act': 'kanban', onclick: stop(() => env.navigate('/kanban')) }, t('wingline.act.kanban')))
+    if (cause === 'asks_you') return el('div', { class: `acts${big ? ' big' : ''}` }, el('button', { class: 'btn go', 'data-act': 'reply', title: t('wingline.act.replyTitle'), onclick: stop(() => openNote(x.id, 'reply')) }, t('wingline.act.reply'), el('span', { class: 'kbd' }, 'Q')), rm)
+    if (cause === 'time_limit') return el('div', { class: `acts${big ? ' big' : ''}` }, el('button', { class: 'btn go', 'data-act': 'more', title: t('wingline.act.moreTitle'), onclick: stop(() => openRetry(x.id)) }, t('wingline.act.more')), el('button', { class: 'btn', 'data-act': 'again', title: t('wingline.act.againTitle'), onclick: stop(() => openNote(x.id, 'again')) }, t('wingline.act.again')), rm)
+    return el('div', { class: `acts${big ? ' big' : ''}` }, el('button', { class: 'btn go', 'data-act': 'again', title: t('wingline.act.againTitle'), onclick: stop(() => openNote(x.id, 'again')) }, t('wingline.act.again'), el('span', { class: 'kbd' }, 'Q')), rm)
+  }
+
+  function barLabel(role, elapsed, max) {
+    const typ = ST[role]
+    if (max && elapsed > max) return [el('span', null, t('wingline.card.pastLimit', dur(elapsed), dur(max))), el('span', null, '')]
+    return [el('span', null, t('wingline.card.elapsed', dur(elapsed))), el('span', null, typ ? t('wingline.card.usualRange', Math.max(1, Math.round(typ.p25 / 60)), Math.max(1, Math.round(typ.p75 / 60))) : max ? t('wingline.card.limit', dur(max)) : '')]
+  }
+  function runBody(x, s, compact) {
+    const elapsed = now() - s.since
+    const typ = stat(x.role)
+    const over = x.maxrt && elapsed > x.maxrt
+    const top = typ ? typ.p90 * 1.1 : x.maxrt || 3600
+    const frac = Math.min(1, elapsed / top)
+    const mark = typ ? typ.p75 / top : null
+    const line = S.at == null && x.act ? plainAct(x.act.text) : t('wingline.card.working')
+    return [
+      !compact && el('div', { class: 'livel' }, el('span', { class: 'spin' }), el('span', { 'data-live': x.id }, line)),
+      el('div', { class: `bar${over ? ' over' : ''}`, 'data-bar': s.since, 'data-role': x.role, 'data-max': x.maxrt || '' }, el('i', { style: `width:${frac * 100}%` }), mark != null && el('span', { class: 'typ', style: `left:${mark * 100}%` })),
+      el('div', { class: `barl${over ? ' over' : ''}`, 'data-barl': s.since, 'data-role': x.role, 'data-max': x.maxrt || '' }, barLabel(x.role, elapsed, x.maxrt))
+    ]
+  }
+  function roundLine(x) {
+    const m = roundOf(x.pipe)
+    if (!m || m[2] === '1') return null
+    const prev = T.filter(y => y.board === x.board && y.pipe === `${m[1]} r${m[2] - 1}`)
+    const bad = prev.filter(y => verdictBad(lastSum(y)))
+    const g = prev.find(y => y.step === 'gate')
+    const why = bad.length ? t('wingline.card.found', bad.map(lensName).join(' + ')) : g && g.status === 'archived' ? t('wingline.card.askedChanges') : t('wingline.card.again')
+    return el('div', { class: 'rline' }, el('span', null, '↻'), t('wingline.card.round', m[2], why))
+  }
+  function checkText(x) {
+    const s = state(x)
+    const elapsed = now() - s.since
+    const typ = ST[x.role]
+    const quiet = x.act ? now() - x.act.at : null
+    if (quiet != null && quiet > QUIET) return { bad: true, text: t('wingline.check.stuck', dur(quiet)) }
+    const last = x.act ? t('wingline.check.last', ago(quiet), plainAct(x.act.text)) : ''
+    if (!typ) return { bad: false, text: last + t('wingline.check.plain', dur(elapsed)) }
+    if (elapsed > typ.p90) return { bad: false, text: last + t('wingline.check.long', dur(elapsed), Math.round(typ.p90 / 60)) }
+    return { bad: false, text: last + t('wingline.check.ok', dur(elapsed), Math.max(1, Math.round(typ.p25 / 60)), Math.max(1, Math.round(typ.p75 / 60))) }
+  }
+  function workActions(x) {
+    if (S.noteFor === x.id) return noteBox(x)
+    const ck = S.check === x.id && checkText(x)
+    const stop = fn => e => {
+      e.stopPropagation()
+      fn()
+    }
+    return el('div', null, ck && el('div', { class: `cans${ck.bad ? ' bad' : ''}`, 'data-check': x.id }, ck.text),
+      el('div', { class: 'acts' },
+        el('button', { class: 'btn', 'data-act': 'check', title: t('wingline.act.checkTitle'), onclick: stop(() => { S.check = S.check === x.id ? null : x.id; render() }) }, t('wingline.act.check')),
+        el('button', { class: 'btn', 'data-act': 'tell', title: t('wingline.act.tellTitle'), onclick: stop(() => openNote(x.id, 'tell')) }, t('wingline.act.tell'))))
+  }
+  function roleLine(x) {
+    const n = x.runs.filter(r => r.s <= now()).length
+    return n > 1 && state(x).k !== 'needs' ? el('div', { class: 'role' }, t('wingline.card.tryN', n)) : null
+  }
+  function badge(x) {
+    const c = causeOf(x)
+    return c ? el('div', { class: `badge ${c}`, 'data-cause': c }, el('i'), t(`wingline.badge.${c}`, facts(x.story))) : null
+  }
+  function taskCard(x, s) {
+    const c = el('div', { class: `card ${s.k}${S.sel === `t:${x.id}` ? ' sel' : ''}`, 'data-nav': `t:${x.id}`, 'data-ids': x.id, 'data-pipe': x.pipe, tabindex: -1 })
+    add(c, el('div', { class: 'ctop' }, pchip(x), ageEl(s)), el('div', { class: 'ctitle' }, label(x)), roundLine(x) || roleLine(x))
+    if (s.k === 'needs') {
+      add(c, S.at == null && badge(x) ? badge(x) : el('div', { class: 'why' }, s.why || ''))
+      if (S.at == null) add(c, needActions(x))
+    }
+    if (s.k === 'working') {
+      add(c, ...runBody(x, s))
+      if (S.at == null) add(c, workActions(x))
+    }
+    if (s.k === 'queued') {
+      const w = waitText(x)
+      add(c, el('div', { class: 'wait' }, w || (s.note ? [t('wingline.card.requeued'), ' · ', el('b', null, t('wingline.card.withNote', s.note))] : s.from ? t('wingline.card.requeued') : t('wingline.card.ready'))))
+    }
+    const typ = ST[x.role]
+    add(c, el('div', { class: 'cfoot' }, s.k === 'queued' && !x.usd ? (typ ? el('span', null, t('wingline.card.usually', usd(typ.usd))) : null) : el('span', { class: 'usd', 'data-usd': x.id }, `${x.usdKind === 'estimated' ? '≈ ' : ''}${usd(x.usd)}`), x.comments ? el('span', null, t('wingline.card.notes', x.comments)) : null))
+    CARD[x.id] = c
+    ANCH[x.id] = c
+    return c
+  }
+  function stackCard(ts, k) {
+    const t0 = ts[0]
+    const c = el('div', { class: `card ${k} stack`, 'data-ids': ts.map(x => x.id).join(','), 'data-pipe': t0.pipe })
+    const s0 = state(t0)
+    add(c, el('div', { class: 'ctop' }, pchip(t0), ageEl(s0)), el('div', { class: 'ctitle' }, t('wingline.card.checks', ts.length)))
+    const rows = el('div', { class: 'srows' })
+    for (const x of ts) {
+      const s = state(x)
+      const r = el('div', { class: `srow${S.sel === `t:${x.id}` ? ' sel' : ''}`, 'data-nav': `t:${x.id}`, 'data-pipe': x.pipe, tabindex: -1 }, el('i', { class: `sd ${s.k}` }), el('span', null, label(x)), el('span', { class: 'tm', 'data-since': k === 'working' ? s.since : null }, k === 'working' ? dur(now() - s.since) : x.usd ? usd(x.usd) : ''))
+      rows.append(r)
+      CARD[x.id] = c
+      ANCH[x.id] = r
+    }
+    add(c, rows)
+    if (k === 'queued') add(c, el('div', { class: 'wait' }, waitText(t0) || t('wingline.card.readyMany')))
+    if (k === 'working') add(c, ...runBody(t0, s0, true))
+    const sum = ts.reduce((a, x) => a + (x.usd || 0), 0)
+    const typ = stat(t0.role)
+    add(c, el('div', { class: 'cfoot' }, sum ? el('span', { class: 'usd' }, usd(sum)) : typ ? el('span', null, t('wingline.card.usually', usd(typ.usd * ts.length))) : null))
+    return c
+  }
+  function pipeResult(pipe, ts, all) {
+    const g = pipeOf(ts[0]).find(x => x.step === 'gate')
+    const bad = ts.filter(x => verdictBad(lastSum(x)))
+    const m = roundOf(pipe)
+    const next = m ? +m[2] + 1 : 2
+    if (bad.length) return el('div', { class: 'res back' }, el('span', null, '↻'), t('wingline.res.back', bad.map(lensName).join(' + '), next))
+    if (g && g.status === 'archived') return el('div', { class: 'res back' }, el('span', null, '↻'), t('wingline.res.backYou', next))
+    if (g && /merged/i.test(lastSum(g))) return el('div', { class: 'res ok' }, el('span', null, '✓'), m && m[2] !== '1' ? t('wingline.res.mergedRound', m[2]) : t('wingline.res.merged'))
+    if (g && /approv|PASS|ship/i.test(lastSum(g))) return el('div', { class: 'res ok' }, el('span', null, '✓'), t('wingline.res.approved'))
+    return el('div', { class: 'res ok' }, el('span', null, '✓'), ts.length === all ? t('wingline.res.all', all) : t('wingline.res.some', ts.length, all))
+  }
+  function doneCard(pipe, ts, all) {
+    const open = !!S.groupOpen[pipe]
+    const last = ts.reduce((a, x) => Math.max(a, x.done || 0), 0)
+    const c = el('div', { class: `card done grp${open ? ' open' : ''}${S.sel === `g:${pipe}` ? ' sel' : ''}`, 'data-nav': `g:${pipe}`, 'data-ids': ts.map(x => x.id).join(','), 'data-pipe': pipe, tabindex: -1 })
+    const chev = icon('chev', 13)
+    chev.classList.add('chev')
+    add(c, el('div', { class: 'ctop' }, pchip(ts[0]), el('span', { class: 'age' }, ago(now() - last))), el('div', { class: 'ctitle row' }, chev, pipeName(pipe)), pipeResult(pipe, ts, all))
+    if (open) {
+      const rows = el('div', { class: 'srows' })
+      for (const x of ts) {
+        const r = el('div', { class: `srow${S.sel === `t:${x.id}` ? ' sel' : ''}`, 'data-nav': `t:${x.id}`, 'data-pipe': pipe, tabindex: -1 }, el('i', { class: 'sd done' }), el('span', null, label(x)), el('span', { class: 'tm' }, usd(x.usd)))
+        rows.append(r)
+        ANCH[x.id] = r
+      }
+      add(c, rows)
+    }
+    for (const x of ts) {
+      CARD[x.id] = c
+      ANCH[x.id] = ANCH[x.id] || c
+    }
+    const took = ts.reduce((a, x) => a + x.runs.reduce((y, r) => y + ((r.e || r.s) - r.s), 0), 0)
+    add(c, el('div', { class: 'cfoot' }, el('span', { class: 'usd' }, usd(ts.reduce((a, x) => a + (x.usd || 0), 0))), el('span', null, t('wingline.card.steps', ts.length, dur(took)))))
+    return c
+  }
+
+  function renderBoard(view, anim) {
+    const before = {}
+    for (const id in CARD) if (CARD[id].isConnected) before[id] = CARD[id].getBoundingClientRect()
+    CARD = {}
+    ANCH = {}
+    const bd = el('div', { class: 'board' })
+    const ts = boardTasks(S.board).map(x => [x, state(x)]).filter(([x, s]) => s.k !== 'absent' && s.k !== 'gone' && matches(x))
+    for (const [k, col] of COLS) {
+      const list = ts.filter(([, s]) => s.k === k)
+      const sum = list.reduce((a, [x]) => a + (x.usd || 0), 0)
+      const cards = el('div', { class: 'cards' })
+      bd.append(el('div', { class: `col${list.length ? '' : ' empty'}`, 'data-col': k }, el('div', { class: 'chead' }, el('i', { class: 'gl', style: `background:${col}` }), el('b', null, t(`wingline.col.${k}`)), el('span', { class: 'n' }, list.length), el('span', { class: 'sum' }, list.length ? usd(sum) : '')), cards))
+      if (k === 'done') {
+        const g = {}
+        for (const [x] of list) (g[x.pipe] = g[x.pipe] || []).push(x)
+        const groups = Object.entries(g).sort((a, b) => Math.max(...b[1].map(x => x.done || 0)) - Math.max(...a[1].map(x => x.done || 0)))
+        groups.slice(0, doneLimit).forEach(([p, arr]) => cards.append(doneCard(p, arr.sort((a, b) => (ROLEO[a.role] ?? 1) - (ROLEO[b.role] ?? 1)), pipeOf(arr[0]).length)))
+        if (groups.length > doneLimit) cards.append(el('button', { class: 'more', onclick: () => { doneLimit = 999; render() } }, t('wingline.card.more', groups.length - doneLimit)))
+        continue
+      }
+      list.sort(([a, sa], [b, sb]) => (k === 'queued' ? a.pipe.localeCompare(b.pipe) || (ROLEO[a.role] ?? 1) - (ROLEO[b.role] ?? 1) : sa.since - sb.since))
+      const used = new Set()
+      for (const [x, s] of list) {
+        if (used.has(x.id)) continue
+        const sib = x.role === 'review' && x.parents.length ? list.filter(([y]) => y.pipe === x.pipe && y.role === 'review' && JSON.stringify(y.parents) === JSON.stringify(x.parents)).map(([y]) => y) : [x]
+        sib.forEach(y => used.add(y.id))
+        cards.append(sib.length > 1 && k !== 'needs' ? stackCard(sib, k) : taskCard(x, s))
+      }
+    }
+    const svg = document.createElementNS(SVG_NS, 'svg')
+    svg.setAttribute('class', 'pin')
+    bd.append(svg)
+    const hv = S.hover
+    S.hover = null
+    view.replaceChildren(bd)
+    wireBoard(bd)
+    if (hv && !(S.at != null && S.playing)) {
+      later(() => {
+        if (bd.isConnected && !S.hover) hover(bd, hv)
+      }, 520)
+    }
+    const done = new Set()
+    for (const id in CARD) {
+      const node = CARD[id]
+      if (done.has(node)) continue
+      done.add(node)
+      const from = node.dataset.ids.split(',').map(i => before[i]).find(Boolean)
+      if (from && anim !== 'enter') {
+        const to = node.getBoundingClientRect()
+        const dx = from.left - to.left
+        const dy = from.top - to.top
+        if (Math.abs(dx) + Math.abs(dy) > 2) animate(node, [{ transform: `translate(${dx}px,${dy}px)` }, { transform: 'none' }], { duration: 480, easing: 'cubic-bezier(.2,.8,.2,1)' })
+        if (Math.abs(dx) > 40) node.classList.add('flash', ...(node.classList.contains('needs') ? ['red'] : []))
+      } else if (anim === 'enter' || Object.keys(before).length) {
+        node.classList.add('enter')
+        node.addEventListener('animationend', () => node.classList.remove('enter'), { once: true })
+        node.style.animationDelay = `${anim === 'enter' ? Math.min(400, done.size * 28) : 0}ms`
+      }
+    }
+  }
+  function hover(bd, p) {
+    S.hover = p
+    bd.classList.toggle('hov', !!p)
+    bd.querySelectorAll('[data-pipe]').forEach(x => x.classList.toggle('hl', x.dataset.pipe === p))
+    drawLinks(p)
+  }
+  async function drawLinks(pipe) {
+    const bd = $('.board')
+    if (!bd) return
+    const svg = bd.querySelector('svg.pin')
+    svg.replaceChildren()
+    if (!pipe) return
+    const gen = ++LINKGEN
+    const moving = typeof bd.getAnimations === 'function' ? bd.getAnimations({ subtree: true }).filter(a => Number.isFinite(a.effect?.getComputedTiming().iterations) && a.playState === 'running') : []
+    if (moving.length) {
+      await Promise.all(moving.map(a => a.finished.catch(err => console.warn(`[${ID}] animation`, err))))
+      if (gen !== LINKGEN || S.hover !== pipe || !bd.isConnected) return
+      svg.replaceChildren()
+    }
+    svg.style.width = `${bd.scrollWidth}px`
+    svg.style.height = `${bd.scrollHeight}px`
+    const br = svg.getBoundingClientRect()
+    const pos = n => {
+      const r = n.getBoundingClientRect()
+      return { l: r.left - br.left, r: r.right - br.left, y: r.top - br.top + Math.min(r.height / 2, 22) }
+    }
+    const drawn = new Set()
+    for (const x of boardTasks(S.board).filter(y => y.pipe === pipe)) {
+      for (const pid of x.parents) {
+        const a = ANCH[pid]
+        const b = ANCH[x.id]
+        if (!a || !b || a === b) continue
+        const key = a.dataset.nav + b.dataset.nav
+        if (drawn.has(key)) continue
+        drawn.add(key)
+        const p = pos(a)
+        const q = pos(b)
+        let x1
+        let x2
+        if (p.r < q.l) [x1, x2] = [p.r, q.l]
+        else if (q.r < p.l) [x1, x2] = [p.l, q.r]
+        else [x1, x2] = [p.r, q.r]
+        const dx = Math.max(40, Math.abs(x2 - x1) / 2)
+        const same = x1 === p.r && x2 === q.r
+        const d = same ? `M${x1} ${p.y} C${x1 + 30} ${p.y} ${x2 + 30} ${q.y} ${x2} ${q.y}` : `M${x1} ${p.y} C${x1 + (x2 > x1 ? dx : -dx)} ${p.y} ${x2 - (x2 > x1 ? dx : -dx)} ${q.y} ${x2} ${q.y}`
+        const path = document.createElementNS(SVG_NS, 'path')
+        for (const [k, v] of Object.entries({ d, fill: 'none', stroke: hue(pipe), 'stroke-width': 1.6, 'stroke-dasharray': '4 4', opacity: 0.85 })) path.setAttribute(k, v)
+        animate(path, [{ strokeDashoffset: 40 }, { strokeDashoffset: 0 }], { duration: 1200, iterations: Infinity })
+        const dot = document.createElementNS(SVG_NS, 'circle')
+        for (const [k, v] of Object.entries({ cx: x2, cy: q.y, r: 3, fill: hue(pipe) })) dot.setAttribute(k, v)
+        svg.append(path, dot)
+      }
+    }
+  }
+  function wireBoard(bd) {
+    bd.addEventListener('mouseover', e => {
+      const c = e.target.closest('[data-pipe]')
+      const p = c ? c.dataset.pipe : null
+      if (p === S.hover || DRAG || (S.at != null && S.playing)) return
+      hover(bd, p)
+    })
+    bd.addEventListener('mouseleave', () => hover(bd, null))
+    bd.addEventListener('click', e => {
+      if (e.target.closest('button,textarea')) return
+      const n = e.target.closest('[data-nav]')
+      if (!n) return
+      const k = n.dataset.nav
+      select(k)
+      if (k.startsWith('g:')) {
+        S.groupOpen[k.slice(2)] = !S.groupOpen[k.slice(2)]
+        render()
+      } else openDrawer(k.slice(2))
+    })
+    bd.addEventListener('pointerdown', dragStart)
+  }
+
+  function dragStart(e) {
+    if (e.button !== 0 || e.target.closest('button,textarea') || S.at != null) return
+    const card = e.target.closest('.card')
+    if (!card) return
+    DRAG = { card, col: card.closest('.col').dataset.col, x: e.clientX, y: e.clientY, on: false, ids: card.dataset.ids.split(',') }
+    window.addEventListener('pointermove', dragMove)
+    window.addEventListener('pointerup', dragEnd, { once: true })
+  }
+  function dragMove(e) {
+    const d = DRAG
+    if (!d) return
+    if (!d.on) {
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < 5) return
+      d.on = true
+      d.r = d.card.getBoundingClientRect()
+      d.ghost = d.card.cloneNode(true)
+      d.ghost.classList.add('ghost')
+      d.ghost.classList.remove('sel', 'enter')
+      d.ghost.style.width = `${d.r.width}px`
+      root.querySelector('.wl-app').append(d.ghost)
+      d.card.classList.add('dragging')
+      hover($('.board'), null)
+    }
+    d.ghost.style.left = `${d.r.left + e.clientX - d.x}px`
+    d.ghost.style.top = `${d.r.top + e.clientY - d.y}px`
+    const over = document.elementFromPoint(e.clientX, e.clientY)?.closest('.col')
+    $$('.col').forEach(c => c.classList.remove('drop', 'nodrop'))
+    if (over && root.contains(over) && over.dataset.col !== d.col) over.classList.add(rule(d, over.dataset.col).ok ? 'drop' : 'nodrop')
+    d.to = over && root.contains(over) ? over.dataset.col : null
+  }
+  function rule(d, to) {
+    const x = BY[d.ids[0]]
+    if (d.col === 'needs' && to === 'queued' && x && x.status === 'blocked' && causeOf(x) !== 'asks_you') return { ok: true }
+    if (d.col === 'working') return { ok: false, msg: t('wingline.drag.working') }
+    if (to === 'done') return { ok: false, msg: t('wingline.drag.done') }
+    if (to === 'working') return { ok: false, msg: t('wingline.drag.start') }
+    if (to === 'needs') return { ok: false, msg: t('wingline.drag.block') }
+    if (d.col === 'done') return { ok: false, msg: t('wingline.drag.reopen') }
+    return { ok: false, msg: t('wingline.drag.none') }
+  }
+  function dragEnd() {
+    window.removeEventListener('pointermove', dragMove)
+    const d = DRAG
+    DRAG = null
+    if (!d) return
+    $$('.col').forEach(c => c.classList.remove('drop', 'nodrop'))
+    if (!d.on) return
+    const r = d.to && d.to !== d.col ? rule(d, d.to) : { ok: false }
+    if (r.ok) {
+      d.ghost.remove()
+      d.card.classList.remove('dragging')
+      openNote(d.ids[0], 'again')
+      return
+    }
+    d.ghost.classList.add('back')
+    d.ghost.style.left = `${d.r.left}px`
+    d.ghost.style.top = `${d.r.top}px`
+    d.ghost.style.transform = 'none'
+    later(() => {
+      d.ghost.remove()
+      d.card.classList.remove('dragging')
+      if (r.msg) {
+        d.card.classList.add('shake')
+        later(() => d.card.classList.remove('shake'), 400)
+      }
+    }, 300)
+    if (r.msg) toast(r.msg, null, true)
+  }
+
+  function renderList(view) {
+    ANCH = {}
+    CARD = {}
+    const wrap = el('div', { class: 'list' })
+    const g = {}
+    for (const x of boardTasks(S.board)) if (state(x).k !== 'absent' && matches(x)) (g[x.pipe] = g[x.pipe] || []).push(x)
+    const rank = ts => {
+      const ks = ts.map(x => state(x).k)
+      return ks.includes('needs') ? 0 : ks.includes('working') ? 1 : ks.includes('queued') ? 2 : 3
+    }
+    const groups = Object.entries(g).sort((a, b) => rank(a[1]) - rank(b[1]) || Math.max(...b[1].map(x => x.done || x.created)) - Math.max(...a[1].map(x => x.done || x.created)))
+    for (const [p, ts0] of groups) {
+      const ts = ts0.sort((a, b) => (ROLEO[a.role] ?? 1) - (ROLEO[b.role] ?? 1) || a.created - b.created)
+      const rk = rank(ts)
+      const open = S.groupOpen[`l:${p}`] ?? rk < 3
+      const st = rk === 0 ? [t('wingline.list.needs'), 'red'] : rk === 1 ? [t('wingline.list.working'), 'gold'] : rk === 2 ? [t('wingline.list.queued'), ''] : [t('wingline.list.shipped', ago(now() - Math.max(...ts.map(x => x.done || 0)))), '']
+      const grp = el('div', { class: 'lgrp' }, el('button', { class: 'lhead', 'data-nav': `g:${p}`, onclick: () => { S.groupOpen[`l:${p}`] = !open; render() } },
+        el('i', { class: 'sq', style: `background:${hue(p)}` }), el('span', null, el('span', { class: 'nm' }, p), el('span', { class: `st ${st[1]}` }, st[0])),
+        el('div', { class: 'dots' }, ts.map(x => el('i', { class: state(x).k, title: label(x) }))), el('span', { class: 'mono dim' }, t('wingline.list.tasks', ts.length)), el('span', { class: 'mono rt' }, usd(ts.reduce((a, x) => a + (x.usd || 0), 0)))))
+      if (open) {
+        for (const x of ts) {
+          const s = state(x)
+          const sub = s.k === 'needs' ? el('span', { class: 's2 red' }, causeOf(x) ? t(`wingline.badge.${causeOf(x)}`, facts(x.story)) : s.why) : s.k === 'working' ? el('span', { class: 's2 mono', 'data-live': x.id }, `▸ ${S.at == null && x.act ? plainAct(x.act.text) : t('wingline.card.working')}`) : s.k === 'queued' ? el('span', { class: 's2' }, waitText(x) || t('wingline.card.ready')) : el('span', { class: 's2' }, x.done ? t('wingline.list.finished', ago(now() - x.done)) : t('wingline.list.done'))
+          const row = el('div', { class: `lrow${S.sel === `t:${x.id}` ? ' sel' : ''}`, 'data-nav': `t:${x.id}`, tabindex: -1, onclick: () => { select(`t:${x.id}`); openDrawer(x.id) } },
+            el('i', { class: `sd ${s.k}` }), el('span', { class: 'nm' }, label(x)), sub,
+            el('span', { class: 'r', 'data-since': s.k === 'working' || s.k === 'needs' ? s.since : null }, s.k === 'done' ? dur(x.runs.reduce((y, r) => y + ((r.e || r.s) - r.s), 0)) : dur(now() - s.since)),
+            el('span', { class: 'r' }, x.runs.length ? t('wingline.list.runs', x.runs.length) : '—'), el('span', { class: 'r ink' }, usd(x.usd)))
+          grp.append(row)
+          ANCH[x.id] = row
+        }
+      }
+      wrap.append(grp)
+    }
+    view.replaceChildren(wrap)
+  }
+
+  function inboxItems() {
+    const at = now()
+    const items = []
+    for (const x of T) {
+      const s = state(x)
+      if (s.k === 'needs') items.push({ key: `t:${x.id}`, x, kind: 'needs', ts: s.since, title: label(x), sub: causeOf(x) ? t(`wingline.badge.${causeOf(x)}`, facts(x.story)) : s.why })
+    }
+    const g = {}
+    for (const x of T) {
+      if (x.done && at - x.done < 3 * 86400 && x.done <= at) {
+        const k = `${x.board}|${x.pipe}`
+        ;(g[k] = g[k] || []).push(x)
+      }
+    }
+    for (const ts of Object.values(g)) {
+      const all = pipeOf(ts[0]).filter(x => state(x).k !== 'gone')
+      if (!all.every(x => state(x).k === 'done')) continue
+      const gate = all.find(x => x.role === 'gate') || ts[0]
+      items.push({ key: `t:${gate.id}`, x: gate, kind: 'shipped', ts: Math.max(...all.map(x => x.done)), title: t('wingline.inbox.shipped', ts[0].pipe), sub: t('wingline.inbox.allDone', all.length) })
+    }
+    for (const x of T) {
+      for (const r of x.runs) {
+        if (r.e && r.e <= at && at - r.e < 86400 && (r.o === 'crashed' || r.o === 'timed_out') && state(x).k !== 'needs') items.push({ key: `t:${x.id}`, x, kind: 'crash', ts: r.e, title: t('wingline.inbox.crashed', label(x)), sub: t('wingline.inbox.endedAs', outWord(r.o)) })
+      }
+    }
+    return items.sort((a, b) => (a.kind === 'needs' ? 0 : 1) - (b.kind === 'needs' ? 0 : 1) || b.ts - a.ts)
+  }
+  function renderInbox(view) {
+    ANCH = {}
+    CARD = {}
+    const items = inboxItems()
+    const wrap = el('div', { class: 'inbox' })
+    const list = el('div', { class: 'ilist' })
+    if (!S.sel || !items.some(i => i.key === S.sel)) S.sel = items[0]?.key || null
+    let sec = null
+    for (const it of items) {
+      const s = it.kind === 'needs' ? t('wingline.inbox.needs') : t('wingline.inbox.since')
+      if (s !== sec) {
+        sec = s
+        list.append(el('div', { class: 'sec' }, el('span', null, s)))
+      }
+      const unread = it.kind !== 'needs' && !SEEN[`${it.key}@${it.ts}`]
+      list.append(el('button', { class: `irow${S.sel === it.key ? ' sel' : ''}`, 'data-nav': it.key, 'data-kind': it.kind, onclick: () => { select(it.key); markSeen(it); render() } },
+        el('i', { class: `u${it.kind === 'needs' ? ' red' : unread ? ' blue' : ''}` }), el('span', { class: 't' }, it.title), el('span', { class: 'tm' }, ago(now() - it.ts)),
+        el('span', { class: 's' }, `${boardName(it.x.board)} · ${it.sub}`)))
+    }
+    const det = el('div', { class: 'idet' })
+    if (!items.length) det.append(el('div', { class: 'empty-st' }, el('div', null, el('b', null, t('wingline.inbox.clear')), t('wingline.inbox.clearSub'))))
+    else if (S.sel && BY[S.sel.slice(2)]) det.append(detail(BY[S.sel.slice(2)]))
+    wrap.append(list, det)
+    view.replaceChildren(wrap)
+  }
+  function markSeen(it) {
+    SEEN[`${it.key}@${it.ts}`] = 1
+    const keep = Object.keys(SEEN).slice(-300)
+    writeStore(UNREAD_KEY, Object.fromEntries(keep.map(k => [k, 1])))
+  }
+
+  function layers(ts) {
+    const L = {}
+    const lay = x => L[x.id] ?? (L[x.id] = x.parents.filter(p => BY[p] && BY[p].pipe === x.pipe && BY[p].id !== x.id).reduce((m, p) => Math.max(m, lay(BY[p]) + 1), 0))
+    ts.forEach(lay)
+    const out = []
+    ts.forEach(x => (out[L[x.id]] = out[L[x.id]] || []).push(x))
+    return out.filter(Boolean)
+  }
+  function loopBlock(x) {
+    const m = roundOf(x.pipe)
+    if (!m) return null
+    const base = m[1]
+    const rounds = {}
+    for (const y of T) {
+      const k = y.board === x.board && roundOf(y.pipe)
+      if (k && k[1] === base) (rounds[k[2]] = rounds[k[2]] || []).push(y)
+    }
+    const ns = Object.keys(rounds).map(Number).sort((a, b) => a - b)
+    const verdict = y => {
+      const s = state(y).k
+      if (s !== 'done' && s !== 'gone') return s
+      return verdictBad(lastSum(y)) ? 'bad' : 'ok'
+    }
+    const short = s => {
+      s = s.replace(/^(VERDICT:\s*\w+\s*[—-]\s*|Round \d+:\s*|escalation:\s*)/, '')
+      const q = s.match(/^(.{15,150}?[.;(])(\s|$)/)
+      return q ? q[1].replace(/[(;.]$/, '') : s.length > 150 ? `${s.slice(0, 150).replace(/\s+\S*$/, '')}…` : s
+    }
+    const box = el('div', { class: 'loop', 'data-loop': base }, el('div', { class: 'lph' }, el('span', null, t('wingline.det.loop')), el('span', null, ns.length === 1 ? t('wingline.det.round1') : t('wingline.det.rounds', ns.length))))
+    for (const n of ns) {
+      const R = rounds[n]
+      const by = s => R.find(y => y.step === s)
+      const b = by('build')
+      const g = by('gate')
+      const lens = CHECKS.map(by).filter(Boolean)
+      const bad = lens.filter(y => verdict(y) === 'bad')
+      const gs = g ? lastSum(g) : ''
+      const asked = !!g && state(g).k === 'gone'
+      const call = asked && /Needs your call on (.{8,90}?)(?: \(|[.;]\s|$)/.exec(gs)
+      const merged = g && state(g).k === 'done' && /merged/i.test(gs)
+      const gk = merged ? 'ok' : bad.length || asked ? 'bad' : g ? state(g).k : 'queued'
+      const node = (y, text, k) => el('button', { class: `lpn ${k}${y && y.id === x.id ? ' me' : ''}`, onclick: () => y && (select(`t:${y.id}`), openDrawer(y.id)) }, text)
+      box.append(el('div', { class: 'lpr', 'data-round': n }, el('span', { class: 'lpk' }, `R${n}`),
+        node(b, t('wingline.lens.build'), b ? (state(b).k === 'done' ? 'ok' : state(b).k) : 'queued'), el('i', { class: 'lpa' }),
+        el('span', { class: 'lpl' }, lens.map(y => node(y, lensName(y), verdict(y)))), el('i', { class: 'lpa' }),
+        node(g, merged ? t('wingline.det.mergedNode') : gk === 'bad' ? t('wingline.det.backNode') : t('wingline.det.okNode'), gk)))
+      const why = bad.length ? t('wingline.det.loopWhy', bad.map(lensName).join(' + '), short(lastSum(bad[0]))) : call ? t('wingline.det.loopYou', call[1].replace(/\.$/, '')) : asked ? t('wingline.det.loopYouPlain') : ''
+      if (why) box.append(el('div', { class: 'lpb' }, el('span', { class: 'lpc' }, '↻'), el('span', null, why, el('b', null, t('wingline.det.toRound', n + 1)))))
+    }
+    return box
+  }
+  function storyBlock(x) {
+    const y = x.story
+    const c = causeOf(x)
+    const F = facts(y)
+    const tl = (y.tl || []).filter(e => isNum(e.ts))
+    const box = el('div', { class: 'story', 'data-story': c }, el('div', { class: 'shead' }, t(`wingline.head.${c}`, F)), y.asked && el('div', { class: 'sask' }, t('wingline.asked', y.asked)), el('div', { class: 'swhy' }, t(`wingline.why.${c}`, F), ' ', t('wingline.kids', F.kids || 0)))
+    if (c === 'asks_you' && y.question) add(box, el('div', { class: 'quote' }, el('div', { class: 'qh' }, t('wingline.question')), el('div', null, y.question)))
+    add(box, needActions(x, true))
+    if (S.noteFor !== x.id) {
+      const hint = c === 'review' ? null : c === 'asks_you' ? [[t('wingline.act.reply'), t('wingline.act.hintReply')]] : c === 'time_limit' ? [[t('wingline.act.more'), t('wingline.act.hintMore')], [t('wingline.act.again'), t('wingline.act.hintAgain')]] : [[t('wingline.act.again'), t('wingline.act.hintAgain')]]
+      if (hint) add(box, el('div', { class: 'hint' }, [...hint, [t('wingline.act.remove'), t('wingline.act.hintRemove')]].map(([a, b]) => el('span', null, el('b', null, a), ` ${b}`))))
+    }
+    if (tl.length) {
+      const lastE = tl[tl.length - 1]
+      const tip = el('div', { class: 'tltip' })
+      const show = e => {
+        tip.replaceChildren()
+        add(tip, el('b', null, dhm(e.ts)), tlText(e), e.q ? el('code', null, e.q) : null)
+        box.querySelectorAll('.tdot').forEach(n => n.classList.toggle('on', n.__x === e))
+      }
+      const line = el('div', { class: 'tline' }, el('i', { class: 'trail' }), ...tl.map((e, i) => el('button', { class: `tdot ${e.tone}`, 'aria-label': tlText(e), style: `left:${4 + (92 * i) / Math.max(1, tl.length - 1)}%`, __x: e, onmouseenter: () => show(e), onfocus: () => show(e), onclick: () => show(e) })))
+      add(box, el('div', { class: 'tlbox' }, el('div', { class: 'tlh' }, el('span', null, t('wingline.det.how')), el('span', null, `${dhm(tl[0].ts)} → ${dhm(lastE.ts)}`)), line, tip))
+      show(lastE)
+    }
+    return box
+  }
+  function detail(x) {
+    const s = state(x)
+    const d = el('div', { class: 'det', 'data-id': x.id })
+    add(d, el('div', { class: 'ctop' }, pchip(x), el('span', null, `· ${boardName(x.board)}`), el('span', { class: `pill ${s.k}` }, s.k === 'working' && el('span', { class: 'spin sm' }), t(`wingline.pill.${s.k}`))),
+      el('h2', null, label(x)), el('div', { class: 'role' }, t('wingline.det.step', x.idx || 1, x.of || 1, pipeName(x.pipe))))
+    const lp = loopBlock(x)
+    if (lp) add(d, lp)
+    else {
+      const st = el('div', { class: 'stepper' })
+      const LY = layers(pipeOf(x))
+      LY.forEach((L, i) => {
+        if (i) st.append(el('i', { class: 'link' }))
+        st.append(el('div', { class: `layer${LY.length === 1 ? ' flat' : ''}` }, L.map(y => el('button', { class: `node${y.id === x.id ? ' me' : ''}`, onclick: () => { select(`t:${y.id}`); openDrawer(y.id) } }, el('i', { class: `sd ${state(y).k}` }), label(y)))))
+      })
+      add(d, st)
+    }
+    if (s.k === 'needs' && causeOf(x) && S.at == null) add(d, storyBlock(x))
+    else if (s.k === 'needs') add(d, el('div', { class: 'dsec' }, el('h3', null, t('wingline.det.whyStopped')), el('div', { class: 'box red' }, el('div', { class: 'why big' }, s.why || ''), S.at == null && needActions(x, true))))
+    if (s.k === 'working') add(d, el('div', { class: 'dsec' }, el('h3', null, t('wingline.det.live')), el('div', { class: 'box' }, ...runBody(x, s), S.at == null && workActions(x), S.at == null && x.act && el('div', { class: 'barl' }, el('span', { 'data-ago': x.act.at }, t('wingline.det.lastUpdate', ago(now() - x.act.at))), el('span', null, '')))))
+    if (s.k === 'queued') add(d, el('div', { class: 'dsec' }, el('h3', null, t('wingline.det.waiting')), el('div', { class: 'box' }, el('div', { class: 'wait flat' }, waitText(x) || t('wingline.det.readyWait')))))
+    if (s.k === 'done') {
+      const r = x.runs.filter(y => y.e)
+      const took = r.reduce((a, y) => a + y.e - y.s, 0)
+      add(d, el('div', { class: 'res ok big' }, el('span', null, '✓'), t('wingline.res.finished') + (took ? t('wingline.res.took', dur(took)) : '') + (x.usd ? ` · ${usd(x.usd)}` : '') + (r.length > 1 ? t('wingline.res.tries', r.length) : '')))
+      if (x.outcome) add(d, el('details', { class: 'dsec tech' }, el('summary', null, t('wingline.det.report')), el('div', { class: 'box' }, el('div', { class: 'outc full' }, lastSum(x) || x.outcome))))
+    }
+    const typ = ST[x.role]
+    const tech = el('details', { class: 'tech' }, el('summary', null, t('wingline.det.tech')))
+    add(tech, el('div', { class: 'dsec' }, el('h3', null, t('wingline.det.facts')), el('div', { class: 'box' }, el('dl', { class: 'facts' },
+      el('dt', null, t('wingline.det.id')), el('dd', { class: 'mono' }, x.id),
+      el('dt', null, t('wingline.det.agent')), el('dd', null, `${x.assignee || '—'} · ${x.role}`),
+      el('dt', null, t('wingline.det.created')), el('dd', null, `${dhm(x.created)} (${ago(now() - x.created)})`),
+      el('dt', null, t('wingline.det.limit')), el('dd', null, x.maxrt ? dur(x.maxrt) : t('wingline.det.none')),
+      el('dt', null, t('wingline.det.retries')), el('dd', null, x.retries != null ? String(x.retries) : t('wingline.det.dflt')),
+      el('dt', null, t('wingline.det.cost')), el('dd', null, usd(x.usd) + (x.usdKind === 'estimated' ? t('wingline.det.estimated') : '')),
+      el('dt', null, t('wingline.det.typical', x.role)), el('dd', null, typ ? t('wingline.det.typicalVal', Math.max(1, Math.round(typ.p50 / 60)), usd(typ.usd), typ.n) : t('wingline.det.noTypical', x.role))))))
+    const runs = el('div', { class: 'dsec' }, el('h3', null, t('wingline.det.attempts', x.runs.length)))
+    x.runs.slice().reverse().forEach((r, i) => {
+      const n = x.runs.length - i
+      const key = x.id + n
+      const open = S.runOpen[key] ?? i === 0
+      const o = r.e ? r.o : 'running'
+      if (S.at != null && r.s > now()) return
+      runs.append(el('div', { class: `run${open ? ' open' : ''}` }, el('button', { onclick: () => { S.runOpen[key] = !open; renderDrawer() } }, el('span', { class: 'mono dim' }, `#${n}`), el('span', null, r.e ? t('wingline.det.worked', dur(r.e - r.s)) : t('wingline.det.workingFor', dur(now() - r.s)), el('span', { class: 'when' }, dhm(r.s) + (r.e ? `–${hm(r.e)}` : ''))), el('span', { class: `o ${o}` }, outWord(o)), icon('chev', 12)),
+        el('div', { class: 'rb' }, r.err ? el('div', { class: 'rerr' }, r.err) : null, r.sum || (r.e ? t('wingline.det.noSummary') : t('wingline.det.stillWorking')))))
+    })
+    if (!x.runs.length) runs.append(el('div', { class: 'role' }, t('wingline.det.noAttempts')))
+    add(tech, runs, logBlock(x))
+    add(d, tech)
+    return d
+  }
+  function logBlock(x) {
+    const L = S.log && S.log.id === x.id ? S.log : null
+    const box = el('div', { class: 'dsec', 'data-log': x.id }, el('h3', null, t('wingline.log.title')))
+    if (!L) {
+      box.append(el('button', { class: 'btn', 'data-act': 'log', onclick: () => openLog(x) }, t('wingline.log.open')))
+      return box
+    }
+    const body = L.loading ? t('wingline.log.loading') : L.error ? t('wingline.log.failed', L.error) : !L.exists ? t('wingline.log.none') : null
+    add(box, el('div', { class: 'box' }, body || [L.truncated && el('div', { class: 'role' }, t('wingline.log.trunc')), el('pre', { class: 'logpre' }, L.content || t('wingline.log.empty'))]),
+      el('div', { class: 'acts' }, el('button', { class: 'btn', 'data-act': 'log-close', onclick: () => { S.log = null; redetail() } }, t('wingline.log.hide'))))
+    return box
+  }
+  function redetail() {
+    if (S.view === 'inbox') render()
+    else renderDrawer()
+  }
+  async function openLog(x) {
+    S.log = { id: x.id, loading: true }
+    redetail()
+    try {
+      const res = await kanbanCall(`/tasks/${enc(x.id)}/log?tail=${LOG_TAIL}`, x.board)
+      S.log = { id: x.id, loading: false, exists: res?.exists !== false, content: stripAnsi(res?.content || ''), truncated: !!res?.truncated }
+    } catch (err) {
+      console.warn(`[${ID}] reading the log of ${x.id} failed`, err)
+      S.log = { id: x.id, loading: false, error: errText(err) }
+    }
+    if (!dead && S.log && S.log.id === x.id) redetail()
+  }
+  function openDrawer(id) {
+    if (!BY[id]) return
+    if (S.open !== id) S.log = null
+    S.open = id
+    renderDrawer()
+    $('.drawer').classList.add('on')
+  }
+  function closeDrawer() {
+    S.open = null
+    $('.drawer')?.classList.remove('on')
+  }
+  function renderDrawer() {
+    const dr = $('.drawer')
+    if (!S.open || !BY[S.open]) return
+    const scroll = dr.querySelector('.dbody')?.scrollTop || 0
+    dr.replaceChildren(el('div', { class: 'dhead' }, el('span', { class: 'role' }, t('wingline.det.task')), el('span', { class: 'kbd' }, t('wingline.det.move')), el('button', { class: 'x', 'data-act': 'close', onclick: closeDrawer, title: t('wingline.det.close') }, icon('x'))), el('div', { class: 'dbody' }, detail(BY[S.open])))
+    dr.querySelector('.dbody').scrollTop = scroll
+  }
+
+  function boardEvents() {
+    const ev = []
+    for (const x of T.filter(y => y.board === S.board)) {
+      for (const r of x.runs) {
+        ev.push({ ts: r.s, c: 'gold', txt: [el('b', null, x.title), t('wingline.feed.started')] })
+        if (r.e) ev.push({ ts: r.e, c: r.o === 'completed' ? 'green' : 'red', txt: [el('b', null, x.title), r.o === 'completed' ? t('wingline.feed.finished', dur(r.e - r.s)) : r.o === 'blocked' ? (x.role === 'gate' ? t('wingline.feed.approval') : t('wingline.feed.blocked')) : t('wingline.feed.ended', outWord(r.o), dur(r.e - r.s))], needs: r.o !== 'completed' })
+      }
+    }
+    return ev.sort((a, b) => a.ts - b.ts)
+  }
+  function toggleReplay() {
+    if (S.at == null) startReplay()
+    else goLive()
+  }
+  function startReplay(range) {
+    const bt = T.filter(x => x.board === S.board)
+    if (!bt.length) return
+    const first = Math.min(...bt.map(x => x.created))
+    const recent = bt.some(x => x.runs.some(r => r.s > D.now - 86400))
+    S.range = range || S.range || 86400
+    if (!range && !recent) S.range = 'all'
+    RANGE = [S.range === 'all' ? first - 600 : Math.max(first - 600, D.now - S.range), D.now]
+    EV = boardEvents().filter(e => e.ts >= RANGE[0])
+    S.at = RANGE[0]
+    LAST = S.at
+    S.playing = true
+    S.noteFor = null
+    closeDrawer()
+    $('.feed').replaceChildren()
+    render()
+    renderBar()
+    $('.rbar').classList.add('on')
+  }
+  function goLive() {
+    S.at = null
+    S.playing = false
+    $('.rbar').classList.remove('on')
+    $('.feed').replaceChildren()
+    render()
+  }
+  function renderBar() {
+    const bar = $('.rbar')
+    bar.replaceChildren()
+    const span = RANGE[1] - RANGE[0] || 1
+    const X = ts => `${((ts - RANGE[0]) / span) * 100}%`
+    const tr = el('div', { class: 'track' }, el('div', { class: 'ln' }), el('div', { class: 'pr' }))
+    for (const e of EV) if (e.c !== 'green' || EV.length < 120) tr.append(el('i', { class: `ev ${e.needs ? 'red' : e.c === 'gold' ? 'gold' : ''}`, style: `left:${X(e.ts)}` }))
+    const step = span > 3 * 86400 ? 86400 : span > 12 * 3600 ? 6 * 3600 : 3 * 3600
+    for (let x = Math.ceil(RANGE[0] / step) * step; x < RANGE[1]; x += step) tr.append(el('span', { class: 'hr', style: `left:${X(x)}` }, step >= 86400 || new Date(x * 1000).getHours() === 0 ? new Date(x * 1000).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : hm(x)))
+    tr.append(el('i', { class: 'th' }))
+    const seek = e => {
+      const r = tr.getBoundingClientRect()
+      S.at = RANGE[0] + Math.max(0, Math.min(1, (e.clientX - r.left) / (r.width || 1))) * span
+      LAST = S.at
+      $('.feed').replaceChildren()
+      render()
+      tickBar()
+    }
+    tr.addEventListener('pointerdown', e => {
+      seek(e)
+      const mv = ev => seek(ev)
+      window.addEventListener('pointermove', mv)
+      window.addEventListener('pointerup', () => window.removeEventListener('pointermove', mv), { once: true })
+    })
+    const rng = el('div', { class: 'rng' }, [[86400, 'range24'], [3 * 86400, 'range3'], [7 * 86400, 'range7'], ['all', 'rangeAll']].map(([v, k]) => el('button', { class: S.range === v ? 'on' : '', onclick: () => startReplay(v) }, t(`wingline.replay.${k}`))))
+    const spd = el('div', { class: 'rng' }, [[600, 's10'], [1800, 's30'], [7200, 's2h']].map(([v, k]) => el('button', { class: S.speed === v ? 'on' : '', 'data-speed': v, onclick: () => { S.speed = v; renderBar() } }, t(`wingline.replay.${k}`))))
+    bar.append(el('button', { class: 'play', 'data-act': 'play', onclick: () => { S.playing = !S.playing; if (S.at >= RANGE[1]) { S.at = RANGE[0]; LAST = S.at } renderBar() }, title: t('wingline.replay.play') }, icon(S.playing ? 'pause' : 'play', 15)), el('span', { class: 'rt' }), tr, el('div', { class: 'rgrp' }, rng, spd), el('button', { class: 'btn go', 'data-act': 'live', onclick: goLive }, t('wingline.top.goLive'), el('span', { class: 'kbd' }, 'Esc')))
+    tickBar()
+  }
+  function tickBar() {
+    if (S.at == null) return
+    const p = ((S.at - RANGE[0]) / (RANGE[1] - RANGE[0] || 1)) * 100
+    const th = $('.rbar .th')
+    if (!th) return
+    th.style.left = `${p}%`
+    $('.rbar .pr').style.width = `${p}%`
+    $('.rbar .rt').textContent = `${new Date(S.at * 1000).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} ${hm(S.at)}`
+  }
+  function feed(e) {
+    const box = $('.feed')
+    const n = el('div', { class: `fe ${e.needs ? 'red' : e.c}` }, el('span', { class: 'tm' }, hm(e.ts)), el('span', null, e.txt.map(z => (z.nodeType ? z.cloneNode(true) : z))))
+    box.prepend(n)
+    while (box.children.length > 4) box.lastChild.remove()
+    later(() => {
+      n.style.opacity = 0
+      later(() => n.remove(), 600)
+    }, 5200)
+  }
+  const replaySig = () => T.filter(x => x.board === S.board || state(x).k === 'working' || state(x).k === 'needs').map(x => x.id + state(x).k).join()
+  const dataSig = () => (D ? JSON.stringify([D.boards.map(b => b.slug), T.map(x => [x.id, x.status, x.runs.length, x.runs[x.runs.length - 1]?.o, x.runs[x.runs.length - 1]?.e, x.comments, x.story?.cause, x.story?.tl?.length, x.story?.facts?.resetPassed]), Object.keys(OV)]) : '')
+
+  function renderView(anim) {
+    const v = $('.view')
+    if (S.view === 'board') renderBoard(v, anim)
+    else if (S.view === 'list') renderList(v)
+    else renderInbox(v)
+  }
+  function render(anim) {
+    if (dead || !D) return
+    DIRTY = false
+    root.querySelector('.wl-app').classList.toggle('norail', !S.rail)
+    renderRail()
+    renderTop()
+    renderView(anim)
+    if (S.open) renderDrawer()
+    RSIG = replaySig()
+    SIG = dataSig()
+  }
+  function renderState() {
+    const v = $('.view')
+    if (D) return
+    v.replaceChildren(LOADERR ? el('div', { class: 'wl-state', role: 'alert' }, LOADERR, el('button', { class: 'btn', 'data-act': 'reload', onclick: load }, t('wingline.tryAgain'))) : el('div', { class: 'wl-state', role: 'status' }, t('wingline.loading')))
+  }
+  function patchLive() {
+    for (const x of T) {
+      if (x.act && S.at == null) $$(`[data-live="${attr(x.id)}"]`).forEach(n => { n.textContent = n.closest('.agent') || n.classList.contains('s2') ? `▸ ${plainAct(x.act.text)}` : plainAct(x.act.text) })
+      $$(`[data-usd="${attr(x.id)}"]`).forEach(n => { n.textContent = `${x.usdKind === 'estimated' ? '≈ ' : ''}${usd(x.usd)}` })
+      if (S.check === x.id) $$(`[data-check="${attr(x.id)}"]`).forEach(n => { n.textContent = checkText(x).text })
+    }
+    const up = $('[data-updated]')
+    if (up) up.textContent = t('wingline.rail.live', hm(Date.now() / 1000, 1))
+  }
+  const busy = () => !!(S.noteFor || DRAG || S.at != null || S.dlg || $('.scrim')?.classList.contains('on') || (root.contains(document.activeElement) && /INPUT|TEXTAREA/.test(document.activeElement.tagName)))
+
+  function frame(ts) {
+    if (dead) return
+    const dt = Math.min(0.25, (ts - (frame.last || ts)) / 1000)
+    frame.last = ts
+    if (S.at != null && S.playing && !DRAG) {
+      S.at = Math.min(RANGE[1], S.at + dt * S.speed)
+      for (const e of EV) {
+        if (e.ts > LAST && e.ts <= S.at) {
+          feed(e)
+          if (e.needs) toast([el('b', { class: 'redt' }, t('wingline.feed.needs')), ...e.txt.map(z => (z.nodeType ? z.cloneNode(true) : z))], null, true)
+        }
+      }
+      LAST = S.at
+      if (S.at >= RANGE[1]) {
+        S.playing = false
+        renderBar()
+      }
+      if (replaySig() !== RSIG) render()
+      tickBar()
+      tickTimes()
+    }
+    raf = window.requestAnimationFrame(frame)
+  }
+  function tickTimes() {
+    const n = now()
+    $$('[data-since]').forEach(e => {
+      const s = +e.dataset.since
+      if (s) e.textContent = dur(n - s)
+    })
+    $$('[data-bar]').forEach(e => {
+      const elapsed = n - e.dataset.bar
+      const typ = stat(e.dataset.role)
+      const max = +e.dataset.max
+      const top = typ ? typ.p90 * 1.1 : max || 3600
+      e.firstChild.style.width = `${Math.min(100, (elapsed / top) * 100)}%`
+      e.classList.toggle('over', !!max && elapsed > max)
+    })
+    $$('[data-barl]').forEach(e => {
+      const elapsed = n - e.dataset.barl
+      const max = +e.dataset.max
+      e.replaceChildren(...barLabel(e.dataset.role, elapsed, max))
+      e.classList.toggle('over', !!max && elapsed > max)
+    })
+    $$('[data-ago]').forEach(e => {
+      e.textContent = t('wingline.det.lastUpdate', ago(n - e.dataset.ago))
+    })
+    const c = $('[data-clock]')
+    if (c) c.textContent = hm(n, 1)
+  }
+  function tick() {
+    if (S.at != null) return
+    tickTimes()
+    if (DIRTY && !busy()) render()
+  }
+
+  function setBoard(b) {
+    if (S.board === b) return
+    S.board = b
+    writeStore('board', b)
+    S.sel = null
+    doneLimit = DONE_PAGE
+    S.q = ''
+    const q = $('#wl-q')
+    if (q) q.value = ''
+    if (S.at != null) goLive()
+    closeDrawer()
+    render('enter')
+  }
+  function setView(v) {
+    S.view = v
+    if (v !== 'inbox') {
+      const sel = S.sel && BY[S.sel.slice(2)]
+      if (sel && sel.board !== S.board) S.board = sel.board
+    }
+    closeDrawer()
+    render(v === 'board' ? 'enter' : null)
+  }
+  function select(k) {
+    S.sel = k
+    $$('[data-nav]').forEach(e => e.classList.toggle('sel', e.dataset.nav === k))
+    const n = $$('[data-nav]').find(e => e.dataset.nav === k)
+    if (n && typeof n.scrollIntoView === 'function') n.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }
+  function move(dir) {
+    const ns = $$('.view [data-nav]').filter(e => e.offsetParent !== null)
+    if (!ns.length) return
+    let i = ns.findIndex(e => e.dataset.nav === S.sel)
+    if (dir === 'down' || dir === 'up') i = i < 0 ? 0 : Math.max(0, Math.min(ns.length - 1, i + (dir === 'down' ? 1 : -1)))
+    else {
+      const cur = ns[i] || ns[0]
+      const cc = cur.closest('.col')
+      const cols = $$('.col').filter(c => !c.classList.contains('empty'))
+      const ci = cols.indexOf(cc) + (dir === 'right' ? 1 : -1)
+      if (!cc || !cols[ci]) return
+      const y = cur.getBoundingClientRect().top
+      const cand = ns.filter(e => e.closest('.col') === cols[ci])
+      if (!cand.length) return
+      i = ns.indexOf(cand.reduce((a, b) => (Math.abs(b.getBoundingClientRect().top - y) < Math.abs(a.getBoundingClientRect().top - y) ? b : a)))
+    }
+    const k = ns[i].dataset.nav
+    if (S.view === 'inbox') {
+      S.sel = k
+      render()
+      return
+    }
+    select(k)
+    if (S.open && k.startsWith('t:')) openDrawer(k.slice(2))
+  }
+
+  function cmds() {
+    const sel = S.sel && S.sel.startsWith('t:') ? BY[S.sel.slice(2)] : null
+    const c = [
+      [t('wingline.pal.goBoard'), t('wingline.pal.catView'), '1', () => setView('board')],
+      [t('wingline.pal.goList'), t('wingline.pal.catView'), '2', () => setView('list')],
+      [t('wingline.pal.goInbox'), t('wingline.pal.catView'), '3', () => setView('inbox')],
+      [S.at == null ? t('wingline.pal.replay') : t('wingline.pal.live'), t('wingline.pal.catTime'), 'R', toggleReplay],
+      [t('wingline.pal.help'), t('wingline.pal.catHelp'), '?', openHelp],
+      [t('wingline.pal.rail'), t('wingline.pal.catView'), '[', toggleRail]
+    ]
+    if (sel && state(sel).k === 'needs' && causeOf(sel) && !['review', 'asks_you'].includes(causeOf(sel))) c.unshift([t('wingline.pal.again', label(sel)), t('wingline.pal.catAction'), 'Q', () => { if (S.view !== 'board') setView('board'); openNote(sel.id, 'again') }], [t('wingline.pal.remove', label(sel)), t('wingline.pal.catAction'), '', () => remove(sel.id)])
+    if (sel) c.unshift([t('wingline.pal.open', label(sel)), t('wingline.pal.catAction'), '↵', () => openDrawer(sel.id)])
+    for (const b of D.boards) c.push([t('wingline.pal.board', b.name), t('wingline.pal.catBoard'), '', () => setBoard(b.slug), null, 'board'])
+    for (const x of T) {
+      const s = state(x)
+      if (s.k !== 'gone') c.push([x.title, `${t(`wingline.pill.${s.k}`)} · ${boardName(x.board)}`, '', () => { setBoard(x.board); if (S.view === 'inbox') setView('board'); select(`t:${x.id}`); openDrawer(x.id) }, s.k, 'task'])
+    }
+    return c
+  }
+  function score(q, s) {
+    if (!q) return 1
+    s = s.toLowerCase()
+    q = q.toLowerCase()
+    const i = s.indexOf(q)
+    if (i >= 0) return 100 - i
+    let j = 0
+    for (const ch of s) if (ch === q[j]) j++
+    return j === q.length ? 10 : 0
+  }
+  function openPalette() {
+    const sc = $('.scrim')
+    sc.replaceChildren()
+    sc.classList.add('on')
+    PI = 0
+    const sel = S.sel && S.sel.startsWith('t:') ? BY[S.sel.slice(2)] : null
+    const inp = el('input', { placeholder: t('wingline.pal.placeholder'), 'aria-label': t('wingline.pal.placeholder') })
+    const res = el('div', { class: 'pres', role: 'listbox' })
+    let list = []
+    const run = c => {
+      closeScrim()
+      c[3]()
+    }
+    const draw = () => {
+      const q = inp.value.trim()
+      const all = cmds().map(c => [score(q, `${c[0]} ${c[1]}`), c]).filter(x => x[0] > 0)
+      if (!q) all.splice(14)
+      all.sort((a, b) => b[0] - a[0])
+      list = all.slice(0, 40).map(x => x[1])
+      PI = Math.max(0, Math.min(PI, list.length - 1))
+      res.replaceChildren()
+      let g = null
+      list.forEach((c, i) => {
+        const grp = c[5] === 'task' ? t('wingline.pal.tasks') : c[5] === 'board' ? t('wingline.pal.boards') : t('wingline.pal.commands')
+        if (grp !== g && q === '') {
+          g = grp
+          res.append(el('div', { class: 'pg' }, grp))
+        }
+        const dot = c[4] ? el('i', { class: `sd ${c[4]}` }) : icon(c[5] === 'board' ? 'board' : 'bolt', 14)
+        res.append(el('button', { class: `pi${i === PI ? ' on' : ''}`, role: 'option', onmouseenter: () => { PI = i; draw() }, onclick: () => run(c) }, dot, el('span', null, c[0], el('span', { class: 's' }, c[5] === 'task' ? c[1] : '')), c[2] ? el('span', { class: 'kbd' }, c[2]) : el('span')))
+      })
+    }
+    inp.addEventListener('input', () => {
+      PI = 0
+      draw()
+    })
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown') {
+        PI = Math.min(PI + 1, list.length - 1)
+        draw()
+        e.preventDefault()
+      }
+      if (e.key === 'ArrowUp') {
+        PI = Math.max(PI - 1, 0)
+        draw()
+        e.preventDefault()
+      }
+      if (e.key === 'Enter' && list[PI]) run(list[PI])
+      if (e.key === 'Escape') closeScrim()
+      e.stopPropagation()
+    })
+    sc.append(el('div', { class: 'pal', role: 'dialog', onclick: e => e.stopPropagation() }, sel && el('span', { class: 'ctx' }, t('wingline.pal.selected', sel.title)), inp, res))
+    draw()
+    later(() => inp.focus(), 10)
+  }
+  function openHelp() {
+    const sc = $('.scrim')
+    sc.replaceChildren()
+    sc.classList.add('on')
+    const K = [['search', '/'], ['filter', 'F'], ['move', 'J K ← →'], ['open', 'Enter'], ['close', 'Esc'], ['again', 'Q'], ['undo', 'Ctrl Z'], ['views', '1 2 3'], ['replay', 'R'], ['play', 'Space'], ['rail', '['], ['help', '?']]
+    sc.append(el('div', { class: 'help', role: 'dialog', onclick: e => e.stopPropagation() }, el('h3', null, t('wingline.keys.title')), K.map(([a, b]) => el('div', null, t(`wingline.keys.${a}`), el('span', { class: 'kbd' }, b)))))
+  }
+  function closeScrim() {
+    if (S.dlg && S.dlg.phase === 'running') return
+    S.dlg = null
+    $('.scrim').classList.remove('on')
+    root.querySelector('.wl-app').focus()
+  }
+  function toggleRail() {
+    S.rail = !S.rail
+    root.querySelector('.wl-app').classList.toggle('norail', !S.rail)
+  }
+  function onKey(e) {
+    const typing = /INPUT|TEXTAREA/.test(document.activeElement?.tagName) && root.contains(document.activeElement)
+    const scrim = $('.scrim').classList.contains('on')
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing && UNDO.length) {
+      e.preventDefault()
+      undo()
+      return
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return
+    if (e.key === 'Escape') {
+      if (scrim) closeScrim()
+      else if (typing) document.activeElement.blur()
+      else if (S.open) closeDrawer()
+      else if (S.at != null) goLive()
+      else return
+      e.stopPropagation()
+      return
+    }
+    if (typing || scrim || !D) return
+    const k = e.key
+    const sel = S.sel?.startsWith('t:') ? BY[S.sel.slice(2)] : null
+    const handled = () => {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    if (k === '/') {
+      handled()
+      openPalette()
+    } else if (k === 'f') {
+      handled()
+      $('#wl-q')?.focus()
+    } else if (k === 'j' || k === 'ArrowDown') {
+      handled()
+      move('down')
+    } else if (k === 'k' || k === 'ArrowUp') {
+      handled()
+      move('up')
+    } else if (k === 'l' || k === 'ArrowRight') {
+      handled()
+      move('right')
+    } else if (k === 'h' || k === 'ArrowLeft') {
+      handled()
+      move('left')
+    } else if (k === 'Enter' && S.sel) {
+      handled()
+      if (S.sel.startsWith('g:')) {
+        S.groupOpen[S.sel.slice(2)] = !S.groupOpen[S.sel.slice(2)]
+        render()
+      } else openDrawer(S.sel.slice(2))
+    } else if (k === '1' || k === '2' || k === '3') {
+      handled()
+      setView(['board', 'list', 'inbox'][+k - 1])
+    } else if (k === 'r') {
+      handled()
+      toggleReplay()
+    } else if (k === ' ' && S.at != null) {
+      handled()
+      S.playing = !S.playing
+      renderBar()
+    } else if (k === '[') {
+      handled()
+      toggleRail()
+    } else if (k === '?') {
+      handled()
+      openHelp()
+    } else if (k === 'q' && sel && state(sel).k === 'needs' && S.at == null) {
+      const c = causeOf(sel)
+      if (!c || c === 'review') return
+      handled()
+      if (S.view !== 'board' && !S.open) setView('board')
+      openNote(sel.id, c === 'asks_you' ? 'reply' : 'again')
+    }
+  }
+
+  async function load() {
+    const mine = ++seq
+    try {
+      if (typeof env.rest !== 'function') throw new Error(t('wingline.err.noRest'))
+      const d = await env.rest('/app')
+      if (mine !== seq || dead) return
+      if (!d || !Array.isArray(d.tasks) || !Array.isArray(d.boards)) throw new Error(t('wingline.err.shape'))
+      LOADERR = null
+      const first = !D
+      setData(d)
+      if (first) {
+        if (!S.board) {
+          const lead = needsAll()[0] || T.find(x => x.status === 'running')
+          S.board = lead ? lead.board : D.boards[0]?.slug || null
+        }
+        if (!D.boards.length) {
+          $('.view').replaceChildren(el('div', { class: 'wl-state' }, t('wingline.empty')))
+          return
+        }
+        render('enter')
+        return
+      }
+      if (!D.boards.length) return
+      if (S.open && !BY[S.open]) closeDrawer()
+      if (dataSig() !== SIG) {
+        if (busy()) {
+          DIRTY = true
+          patchLive()
+        } else render()
+      } else patchLive()
+    } catch (err) {
+      if (mine !== seq || dead) return
+      console.warn(`[${ID}] reading /app failed`, err)
+      LOADERR = errText(err)
+      if (!D) renderState()
+      else renderRail()
+    }
+  }
+
+  const app = el('div', { class: 'wl-app', tabindex: -1, onkeydown: onKey },
+    el('aside', { class: 'rail' }),
+    el('main', { class: 'main' }, el('header', { class: 'tbar' }), el('section', { class: 'view' }), el('div', { class: 'feed' }), el('div', { class: 'rbar' }), el('aside', { class: 'drawer' })),
+    el('div', { class: 'scrim', onclick: closeScrim }),
+    el('div', { class: 'wl-toasts' }))
+  root.append(app)
+  renderState()
+  load()
+  const poll = window.setInterval(() => {
+    if (document.visibilityState !== 'hidden') load()
+  }, POLL_MS)
+  const clock = window.setInterval(tick, 1000)
+  const onVis = () => {
+    if (document.visibilityState === 'visible') load()
+  }
+  document.addEventListener('visibilitychange', onVis)
+  raf = window.requestAnimationFrame(frame)
+  later(() => app.focus({ preventScroll: true }), 50)
+
+  return {
+    destroy() {
+      dead = true
+      window.clearInterval(poll)
+      window.clearInterval(clock)
+      window.cancelAnimationFrame(raf)
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('pointermove', dragMove)
+      for (const id of timers) window.clearTimeout(id)
+      for (const id of Object.keys(PENDING)) commitRemove(id)
+      app.remove()
+    },
+    refresh: load
+  }
+}
+
+const MIX = (c, p, base = 'transparent') => `color-mix(in srgb, ${c} ${p}%, ${base})`
+const BG = 'var(--ui-bg-chrome)'
+const PANEL = MIX('var(--ui-base)', 4, BG)
+const PANEL2 = MIX('var(--ui-base)', 7, BG)
+const RAIL = MIX('var(--ui-base)', 2, BG)
+const LINE = 'var(--ui-stroke-tertiary)'
+const LINE2 = 'var(--ui-stroke-secondary)'
+const INK = 'var(--ui-text-primary)'
+const LAB = 'var(--ui-text-secondary)'
+const DIM = 'var(--ui-text-tertiary)'
+const GOLD = 'var(--ui-yellow)'
+const RED = 'var(--ui-red)'
+const GREEN = 'var(--ui-green)'
+const BLUE = 'var(--ui-blue)'
+const PINK = MIX(RED, 45, INK)
+const MINT = MIX(GREEN, 40, INK)
+const SHADOW = MIX('black', 45)
+const EASE = 'cubic-bezier(.2,.8,.2,1)'
+const MONO = "'JetBrains Mono',ui-monospace,Consolas,monospace"
+const HEAD = "Collapse,'Segoe UI',system-ui,sans-serif"
+
+const STYLE = `
+.wl-host{position:relative;height:100%;min-height:480px;overflow:hidden}
+.wl-app{position:absolute;inset:0;display:grid;grid-template-columns:232px 1fr;background:${BG};color:${INK};font-size:13px;line-height:1.45;font-variant-numeric:tabular-nums;overflow:hidden;outline:none;transition:grid-template-columns .28s ${EASE}}
+.wl-app.norail{grid-template-columns:0 1fr}
+.wl-app *{box-sizing:border-box}
+.wl-app button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+.wl-app button:disabled{opacity:.5;cursor:default}
+.wl-app button:focus-visible,.wl-app input:focus-visible,.wl-app textarea:focus-visible,.wl-app [data-nav]:focus-visible{outline:2px solid ${GOLD};outline-offset:2px}
+.wl-app .mono{font-family:${MONO}}
+.wl-app .dim{color:${DIM};font-size:12px}
+.wl-app .rt{text-align:right;font-size:12px}
+.wl-app .kbd{font:11px/1 ${MONO};color:${DIM};border:1px solid ${LINE2};border-radius:5px;padding:3px 5px;white-space:nowrap}
+.wl-app .spin{width:12px;height:12px;border-radius:50%;border:2px solid ${MIX(GOLD, 20)};border-top-color:${GOLD};animation:wl-spin .9s linear infinite;flex:none}
+.wl-app .spin.sm{width:10px;height:10px}
+@keyframes wl-spin{to{transform:rotate(360deg)}}
+.wl-app .rail{background:${RAIL};border-right:1px solid ${LINE};display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.wl-app .brand{display:flex;align-items:center;gap:10px;padding:16px 14px 12px}
+.wl-app .brand .logo{width:22px;height:22px;border-radius:7px;background:conic-gradient(from 200deg,${GOLD},${MIX(GOLD, 55, INK)},${GOLD});display:grid;place-items:center;color:${BG};font:700 13px/1 ${HEAD}}
+.wl-app .brand b{font:700 17px/1 ${HEAD};letter-spacing:.01em}
+.wl-app .brand .kbtn{margin-left:auto;display:flex;align-items:center;gap:6px;color:${LAB};font-size:12px;padding:5px 7px;border-radius:7px}
+.wl-app .brand .kbtn:hover{background:${PANEL2}}
+.wl-app .attn{margin:2px 10px 10px;display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:10px;background:${MIX(RED, 15)};color:${PINK};font-weight:600;text-align:left}
+.wl-app .attn.zero{background:${PANEL};color:${LAB};font-weight:500}
+.wl-app .attn .dot{width:8px;height:8px;border-radius:50%;background:${RED};animation:wl-ping 2s infinite}
+.wl-app .attn.zero .dot{background:${GREEN};animation:none}
+.wl-app .attn .n{margin-left:auto;font:600 12px ${MONO}}
+@keyframes wl-ping{0%{box-shadow:0 0 0 0 ${MIX(RED, 60)}}70%{box-shadow:0 0 0 8px ${MIX(RED, 0)}}100%{box-shadow:0 0 0 0 ${MIX(RED, 0)}}}
+.wl-app .sec{padding:10px 14px 6px;color:${DIM};font-size:11px;letter-spacing:.08em;text-transform:uppercase;display:flex;justify-content:space-between}
+.wl-app .boards{padding:0 6px;display:flex;flex-direction:column;gap:1px}
+.wl-app .brow{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:7px 8px;border-radius:8px;text-align:left;align-items:center}
+.wl-app .brow:hover{background:${PANEL}}
+.wl-app .brow.on{background:${PANEL2}}
+.wl-app .brow .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:550}
+.wl-app .brow.quiet .nm{color:${LAB};font-weight:450}
+.wl-app .brow .bd{font:11px ${MONO};color:${DIM}}
+.wl-app .brow .bd.red{color:${BG};background:${RED};border-radius:9px;padding:1px 6px;font-weight:700}
+.wl-app .seg{grid-column:1 / -1;display:flex;height:3px;border-radius:3px;overflow:hidden;background:${PANEL2};gap:1px}
+.wl-app .seg i{display:block;height:100%}
+.wl-app .agents{padding:0 6px;display:flex;flex-direction:column;gap:2px;overflow:auto}
+.wl-app .agent{display:grid;grid-template-columns:14px 1fr auto;gap:0 8px;padding:7px 8px;border-radius:8px;text-align:left;align-items:center}
+.wl-app .agent:hover{background:${PANEL}}
+.wl-app .agent .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:550}
+.wl-app .agent .a{grid-column:2 / -1;font:11px/1.35 ${MONO};color:${LAB};white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl-app .agent .tm{font:11px ${MONO};color:${GOLD}}
+.wl-app .agent.none{color:${DIM};grid-template-columns:1fr;font-size:12px}
+.wl-app .rfoot{margin-top:auto;padding:12px 14px;color:${DIM};font-size:11px;border-top:1px solid ${LINE};line-height:1.5}
+.wl-app .probs{margin-top:6px;color:${PINK};word-break:break-word}
+.wl-app .main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
+.wl-app .tbar{display:flex;align-items:center;gap:14px;padding:14px 20px 12px;border-bottom:1px solid ${LINE};min-width:0}
+.wl-app .tbar h1{margin:0;font:700 24px/1 ${HEAD};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.wl-app .meta{color:${LAB};font-size:12px;white-space:nowrap}
+.wl-app .tabs{display:flex;gap:2px;background:${PANEL};border:1px solid ${LINE};border-radius:9px;padding:2px;margin-left:8px}
+.wl-app .tabs button{padding:5px 11px;border-radius:7px;color:${LAB};font-weight:550;display:flex;gap:7px;align-items:center}
+.wl-app .tabs button.on{background:${PANEL2};color:${INK};box-shadow:inset 0 0 0 1px ${LINE2}}
+.wl-app .tabs .c{font:11px ${MONO};color:${DIM}}
+.wl-app .tabs .c.red{color:${RED}}
+.wl-app .search{margin-left:auto;display:flex;align-items:center;gap:8px;background:${PANEL};border:1px solid ${LINE};border-radius:9px;padding:0 9px;height:32px;width:220px;transition:width .25s ${EASE},border-color .2s}
+.wl-app .search:focus-within{width:300px;border-color:${LINE2}}
+.wl-app .search input{flex:1;background:none;border:0;outline:0;color:${INK};font:inherit;min-width:0}
+.wl-app .search svg{flex:none;opacity:.6}
+.wl-app .live{display:flex;align-items:center;gap:8px;padding:6px 11px;border-radius:9px;border:1px solid ${LINE};color:${LAB};font:12px ${MONO};white-space:nowrap}
+.wl-app .live i{width:7px;height:7px;border-radius:50%;background:${GREEN};box-shadow:0 0 0 3px ${MIX(GREEN, 15)}}
+.wl-app .live.rp i{background:${GOLD};box-shadow:0 0 0 3px ${MIX(GOLD, 20)}}
+.wl-app .rbtn{display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:9px;background:${PANEL2};border:1px solid ${LINE2};font-weight:600;white-space:nowrap}
+.wl-app .view{flex:1;min-height:0;position:relative}
+.wl-app .wl-state{display:grid;place-items:center;gap:10px;height:100%;color:${LAB};text-align:center;padding:40px}
+.wl-app .board{position:absolute;inset:0;display:flex;gap:12px;padding:16px 20px 20px;overflow:auto}
+.wl-app .col{flex:1 1 0;min-width:258px;max-width:380px;display:flex;flex-direction:column;border-radius:14px;transition:flex .35s ${EASE},min-width .35s ${EASE},background .2s,box-shadow .2s}
+.wl-app .col.empty{flex:0 0 46px;min-width:46px}
+.wl-app .col.drop{background:${MIX(GOLD, 6)};box-shadow:inset 0 0 0 1.5px ${MIX(GOLD, 40)}}
+.wl-app .col.nodrop{box-shadow:inset 0 0 0 1.5px ${MIX(RED, 30)}}
+.wl-app .chead{display:flex;align-items:center;gap:8px;padding:4px 6px 10px;white-space:nowrap}
+.wl-app .chead .gl{width:9px;height:9px;border-radius:50%}
+.wl-app .chead b{font-weight:650}
+.wl-app .chead .n{font:12px ${MONO};color:${DIM}}
+.wl-app .chead .sum{margin-left:auto;font:11px ${MONO};color:${DIM}}
+.wl-app .col.empty .chead{writing-mode:vertical-rl;padding:8px 12px;gap:10px}
+.wl-app .col.empty .chead .sum,.wl-app .col.empty .cards{display:none}
+.wl-app .cards{display:flex;flex-direction:column;gap:8px;overflow-y:auto;overflow-x:hidden;padding:2px 4px 30px;margin:0 -4px;flex:1}
+.wl-app .more{color:${LAB};font-size:12px;padding:6px 8px;text-align:left;border-radius:8px}
+.wl-app .more:hover{background:${PANEL}}
+.wl-app .card{position:relative;background:${PANEL};border:1px solid ${LINE};border-radius:12px;padding:11px 12px 10px;cursor:default;user-select:none;transition:opacity .2s,border-color .15s,background .15s,transform .15s;touch-action:none;isolation:isolate}
+.wl-app .card:hover{border-color:${LINE2}}
+.wl-app .card.sel{border-color:${GOLD};box-shadow:0 0 0 3px ${MIX(GOLD, 15)}}
+.wl-app .card.needs{background:linear-gradient(180deg,${MIX(RED, 12, BG)},${MIX(RED, 6, BG)});border-color:${MIX(RED, 35, BG)}}
+.wl-app .card.needs.sel{border-color:${RED};box-shadow:0 0 0 3px ${MIX(RED, 18)}}
+.wl-app .card.working{border-color:${MIX(GOLD, 30, BG)};overflow:hidden}
+.wl-app .card.working::before{content:"";position:absolute;inset:-60%;background:conic-gradient(transparent 0 70%,${GOLD} 85%,transparent 100%);animation:wl-spin 3s linear infinite;z-index:-2;pointer-events:none}
+.wl-app .card.working::after{content:"";position:absolute;inset:1px;border-radius:11px;background:${PANEL};z-index:-1;pointer-events:none}
+.wl-app .card.dragging{opacity:.28}
+.wl-app .shake{animation:wl-shake .38s}
+@keyframes wl-shake{20%,60%{transform:translateX(-5px)}40%,80%{transform:translateX(5px)}}
+.wl-app .board.hov .card,.wl-app .board.hov .srow{opacity:.32}
+.wl-app .board.hov .card.hl,.wl-app .board.hov .srow.hl{opacity:1}
+.wl-app .ctop{display:flex;align-items:center;gap:7px;font-size:11.5px;color:${LAB};min-width:0}
+.wl-app .pchip{display:inline-flex;align-items:center;gap:6px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl-app .pchip i{width:7px;height:7px;border-radius:2px;flex:none}
+.wl-app .age{margin-left:auto;font:11px ${MONO};color:${DIM};white-space:nowrap}
+.wl-app .card.needs .age{color:${RED}}
+.wl-app .card.working .age{color:${GOLD}}
+.wl-app .ctitle{font-weight:650;font-size:14.5px;margin:5px 0 2px;line-height:1.25;overflow-wrap:anywhere}
+.wl-app .ctitle.row{display:flex;align-items:center;gap:6px;font-size:14px}
+.wl-app .role{font-size:11px;color:${DIM}}
+.wl-app .why{color:${PINK};font-size:12.5px;margin-top:6px;line-height:1.4;overflow-wrap:anywhere}
+.wl-app .why.big{margin:0;font-size:13.5px}
+.wl-app .acts{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.wl-app .btn{border:1px solid ${LINE2};border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;white-space:nowrap;background:${MIX(INK, 2)};transition:background .15s,border-color .15s,color .15s}
+.wl-app .btn:hover{background:${MIX(INK, 6)}}
+.wl-app .btn.go{background:${GOLD};border-color:${GOLD};color:${BG}}
+.wl-app .btn.go:hover{filter:brightness(1.08)}
+.wl-app .btn.no{color:${RED};border-color:${MIX(RED, 40, BG)}}
+.wl-app .btn.arm{background:${RED};color:${BG};border-color:${RED}}
+.wl-app .btn .kbd{margin-left:6px;border-color:${MIX(BG, 25)};color:inherit;opacity:.7;padding:1px 4px}
+.wl-app .acts.big .btn{font-size:14px;padding:9px 16px}
+.wl-app .note{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.wl-app .note textarea{background:${BG};border:1px solid ${LINE2};border-radius:8px;color:${INK};font:inherit;padding:7px 9px;resize:none;height:60px;outline:0}
+.wl-app .note textarea:focus{border-color:${GOLD}}
+.wl-app .livel{display:flex;gap:8px;align-items:center;margin-top:7px;font:11.5px/1.35 ${MONO};color:${LAB};min-width:0}
+.wl-app .livel span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl-app .bar{height:4px;border-radius:4px;background:${MIX(GOLD, 14, BG)};margin-top:9px;overflow:hidden;position:relative}
+.wl-app .bar i{position:absolute;inset:0 auto 0 0;background:${GOLD};border-radius:4px;transition:width .6s linear}
+.wl-app .bar.over i{background:${RED}}
+.wl-app .bar .typ{position:absolute;top:-2px;bottom:-2px;width:1px;background:${LAB}}
+.wl-app .barl{display:flex;justify-content:space-between;font-size:11px;color:${DIM};margin-top:4px}
+.wl-app .barl.over{color:${RED}}
+.wl-app .wait{font-size:12px;color:${LAB};margin-top:5px}
+.wl-app .wait.flat{margin:0}
+.wl-app .wait b{color:${INK};font-weight:600}
+.wl-app .cfoot{display:flex;gap:10px;align-items:center;margin-top:8px;font:11px ${MONO};color:${DIM}}
+.wl-app .cfoot .usd{color:${LAB}}
+.wl-app .srows{display:flex;flex-direction:column;gap:2px;margin-top:7px}
+.wl-app .srow{display:grid;grid-template-columns:12px 1fr auto;gap:8px;align-items:center;padding:4px 6px;border-radius:7px;font-size:12.5px;transition:opacity .2s,background .15s}
+.wl-app .srow:hover{background:${MIX(INK, 4)}}
+.wl-app .srow.sel{background:${MIX(GOLD, 10)};box-shadow:inset 0 0 0 1px ${MIX(GOLD, 40)}}
+.wl-app .srow .tm{font:11px ${MONO};color:${DIM}}
+.wl-app .sd{width:8px;height:8px;border-radius:50%;border:1.5px solid ${DIM};display:inline-block;flex:none}
+.wl-app .sd.working{border-color:${GOLD};border-top-color:transparent;animation:wl-spin .9s linear infinite}
+.wl-app .sd.done{background:${DIM};border-color:${DIM}}
+.wl-app .sd.needs{background:${RED};border-color:${RED}}
+.wl-app .outc{color:${LAB};font-size:12.5px;margin-top:6px;line-height:1.4}
+.wl-app .outc.full{margin:0;white-space:pre-wrap}
+.wl-app .logpre{margin:0;max-height:300px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:11.5px/1.45 ${MONO};color:${LAB}}
+.wl-app .chev{transition:transform .2s;flex:none}
+.wl-app .card.open .chev{transform:rotate(90deg)}
+.wl-app .pin{position:absolute;inset:0;pointer-events:none;overflow:visible;z-index:5}
+.wl-app .enter{animation:wl-enter .45s ${EASE} both}
+@keyframes wl-enter{from{opacity:0;transform:translateY(8px) scale(.985)}}
+.wl-app .flash{animation:wl-flash 1.2s ${EASE}}
+@keyframes wl-flash{0%{box-shadow:0 0 0 0 ${MIX(GOLD, 65)}}100%{box-shadow:0 0 0 14px ${MIX(GOLD, 0)}}}
+.wl-app .flash.red{animation:wl-flashr 1.2s ${EASE}}
+@keyframes wl-flashr{0%{box-shadow:0 0 0 0 ${MIX(RED, 75)}}100%{box-shadow:0 0 0 14px ${MIX(RED, 0)}}}
+.wl-app .ghost{position:fixed;z-index:60;pointer-events:none;transform:rotate(2deg) scale(1.03);box-shadow:0 18px 40px ${SHADOW},0 0 0 1px ${MIX(GOLD, 40)};transition:transform .12s}
+.wl-app .ghost.back{transition:left .3s ${EASE},top .3s ${EASE},transform .3s,opacity .3s}
+.wl-app .list{position:absolute;inset:0;overflow:auto;padding:12px 20px 40px}
+.wl-app .lgrp{border-bottom:1px solid ${LINE}}
+.wl-app .lhead{display:grid;grid-template-columns:18px 1fr auto auto 70px;gap:12px;align-items:center;width:100%;padding:12px 6px;text-align:left;border-radius:8px}
+.wl-app .lhead:hover{background:${MIX(INK, 2)}}
+.wl-app .lhead .sq{width:9px;height:9px;border-radius:3px}
+.wl-app .lhead .nm{font-weight:650;font-size:14px}
+.wl-app .lhead .st{font-size:12px;color:${LAB};margin-left:10px;font-weight:450}
+.wl-app .lhead .st.red{color:${RED}}
+.wl-app .lhead .st.gold{color:${GOLD}}
+.wl-app .dots{display:flex;gap:3px;align-items:center}
+.wl-app .dots i{width:9px;height:9px;border-radius:3px;background:${PANEL2}}
+.wl-app .dots i.done{background:${DIM}}
+.wl-app .dots i.working{background:${GOLD}}
+.wl-app .dots i.needs{background:${RED}}
+.wl-app .dots i.queued{background:transparent;box-shadow:inset 0 0 0 1.5px ${LINE2}}
+.wl-app .lrow{display:grid;grid-template-columns:18px 200px 1fr 90px 70px 70px;gap:12px;align-items:center;padding:8px 6px 8px 30px;border-radius:8px;cursor:default}
+.wl-app .lrow:hover{background:${MIX(INK, 3)}}
+.wl-app .lrow.sel{background:${MIX(GOLD, 8)};box-shadow:inset 0 0 0 1px ${MIX(GOLD, 35)}}
+.wl-app .lrow .s2{color:${LAB};font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl-app .lrow .s2.mono{font-size:11.5px}
+.wl-app .lrow .s2.red{color:${PINK}}
+.wl-app .lrow .r{font:11.5px ${MONO};color:${DIM};text-align:right}
+.wl-app .lrow .r.ink{color:${INK}}
+.wl-app .lrow .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl-app .inbox{position:absolute;inset:0;display:grid;grid-template-columns:380px 1fr}
+.wl-app .ilist{border-right:1px solid ${LINE};overflow:auto;padding:10px 10px 40px}
+.wl-app .irow{display:grid;grid-template-columns:10px 1fr auto;gap:2px 10px;padding:10px;border-radius:10px;text-align:left;width:100%;align-items:start}
+.wl-app .irow:hover{background:${PANEL}}
+.wl-app .irow.sel{background:${PANEL2};box-shadow:inset 0 0 0 1px ${LINE2}}
+.wl-app .irow .u{width:7px;height:7px;border-radius:50%;margin-top:6px;background:transparent}
+.wl-app .irow .u.red{background:${RED}}
+.wl-app .irow .u.blue{background:${BLUE}}
+.wl-app .irow .t{font-weight:600;overflow-wrap:anywhere}
+.wl-app .irow .s{grid-column:2 / -1;color:${LAB};font-size:12.5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.wl-app .irow .tm{font:11px ${MONO};color:${DIM};margin-top:2px}
+.wl-app .idet{overflow:auto;padding:22px 28px 40px}
+.wl-app .empty-st{display:grid;place-items:center;height:100%;color:${LAB};text-align:center}
+.wl-app .empty-st b{display:block;font:700 22px ${HEAD};color:${INK};margin-bottom:6px}
+.wl-app .drawer{position:absolute;top:0;right:0;bottom:0;width:min(540px,100%);background:${MIX('var(--ui-base)', 3, BG)};border-left:1px solid ${LINE2};box-shadow:-24px 0 48px ${SHADOW};transform:translateX(105%);transition:transform .32s ${EASE};z-index:20;display:flex;flex-direction:column}
+.wl-app .drawer.on{transform:none}
+.wl-app .dhead{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid ${LINE}}
+.wl-app .dhead .x{margin-left:auto;color:${LAB};padding:4px 6px;border-radius:6px}
+.wl-app .dhead .x:hover{background:${PANEL2}}
+.wl-app .dbody{overflow:auto;padding:16px 18px 40px;flex:1}
+.wl-app .det h2{margin:4px 0 6px;font:700 24px/1.1 ${HEAD};overflow-wrap:anywhere}
+.wl-app .pill{margin-left:auto;display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:3px 9px;font-size:11.5px;font-weight:650;white-space:nowrap}
+.wl-app .pill.needs{background:${RED};color:${BG}}
+.wl-app .pill.working{background:${MIX(GOLD, 20)};color:${GOLD}}
+.wl-app .pill.queued,.wl-app .pill.gone,.wl-app .pill.absent{background:${MIX(INK, 6)};color:${LAB}}
+.wl-app .pill.done{background:${MIX(GREEN, 12)};color:${GREEN}}
+.wl-app .stepper{display:flex;align-items:center;gap:8px;margin:14px 0 4px;padding:10px;background:${PANEL};border:1px solid ${LINE};border-radius:12px;overflow-x:auto}
+.wl-app .layer{display:flex;flex-direction:column;gap:3px}
+.wl-app .layer.flat{flex-direction:row;flex-wrap:wrap}
+.wl-app .node{display:flex;align-items:center;gap:6px;padding:3px 8px;border-radius:7px;font-size:12px;white-space:nowrap;color:${LAB}}
+.wl-app .node:hover{background:${MIX(INK, 5)}}
+.wl-app .node.me{background:${PANEL2};color:${INK};box-shadow:inset 0 0 0 1px ${LINE2}}
+.wl-app .link{width:14px;height:1px;background:${LINE2};flex:none}
+.wl-app .dsec{margin-top:18px}
+.wl-app .dsec>h3{margin:0 0 8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:${DIM};font-weight:600}
+.wl-app .box{background:${PANEL};border:1px solid ${LINE};border-radius:12px;padding:12px 14px}
+.wl-app .box.red{background:linear-gradient(180deg,${MIX(RED, 12, BG)},${MIX(RED, 6, BG)});border-color:${MIX(RED, 35, BG)}}
+.wl-app .facts{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:12.5px;margin:0}
+.wl-app .facts dt{color:${DIM}}
+.wl-app .facts dd{margin:0;overflow-wrap:anywhere}
+.wl-app .run{border:1px solid ${LINE};border-radius:10px;margin-bottom:6px;overflow:hidden}
+.wl-app .run>button{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;width:100%;padding:9px 12px;text-align:left}
+.wl-app .run>button:hover{background:${MIX(INK, 2)}}
+.wl-app .run .when{color:${DIM};margin-left:8px;font-size:12px}
+.wl-app .run .rb{padding:0 12px 12px;color:${LAB};font-size:12.5px;display:none;white-space:pre-wrap;overflow-wrap:anywhere}
+.wl-app .run.open .rb{display:block}
+.wl-app .run .rerr{color:${PINK};margin-bottom:6px}
+.wl-app .run .o{font-size:11px;font-weight:700;border-radius:6px;padding:2px 7px;white-space:nowrap;background:${MIX(INK, 6)};color:${LAB}}
+.wl-app .o.completed{background:${MIX(GREEN, 12)};color:${GREEN}}
+.wl-app .o.crashed,.wl-app .o.timed_out,.wl-app .o.gave_up{background:${MIX(RED, 15)};color:${RED}}
+.wl-app .o.blocked,.wl-app .o.running,.wl-app .o.rate_limited{background:${MIX(GOLD, 20)};color:${GOLD}}
+.wl-app .feed{position:absolute;bottom:72px;right:22px;z-index:8;display:flex;flex-direction:column-reverse;gap:6px;width:340px;pointer-events:none}
+.wl-app .fe{background:${PANEL};border:1px solid ${LINE2};border-radius:10px;padding:8px 11px;font-size:12px;display:grid;grid-template-columns:auto 1fr;gap:9px;animation:wl-fe .35s ${EASE} both;transition:opacity .6s}
+.wl-app .fe .tm{font:11px ${MONO};color:${DIM}}
+.wl-app .fe.red{border-color:${MIX(RED, 40, BG)}}
+.wl-app .fe.red b{color:${RED}}
+.wl-app .fe.gold b{color:${GOLD}}
+.wl-app .fe.green b{color:${GREEN}}
+@keyframes wl-fe{from{opacity:0;transform:translateX(18px)}}
+.wl-app .rbar{display:grid;grid-template-columns:auto auto 1fr auto auto;gap:14px;align-items:center;padding:10px 20px;border-top:1px solid ${LINE};background:${RAIL};transform:translateY(100%);transition:transform .3s ${EASE};position:absolute;left:0;right:0;bottom:0;z-index:15}
+.wl-app .rbar.on{transform:none}
+.wl-app .rgrp{display:flex;gap:8px}
+.wl-app .play{width:34px;height:34px;border-radius:50%;background:${GOLD};color:${BG};display:grid;place-items:center}
+.wl-app .track{position:relative;height:34px;cursor:pointer}
+.wl-app .track .ln{position:absolute;left:0;right:0;top:16px;height:2px;background:${PANEL2};border-radius:2px}
+.wl-app .track .pr{position:absolute;left:0;top:16px;height:2px;background:${GOLD};border-radius:2px}
+.wl-app .track .ev{position:absolute;top:10px;width:2px;height:14px;border-radius:2px;background:${LINE2}}
+.wl-app .track .ev.red{background:${RED};height:18px;top:8px}
+.wl-app .track .ev.gold{background:${MIX(GOLD, 60)}}
+.wl-app .track .th{position:absolute;top:9px;width:16px;height:16px;margin-left:-8px;border-radius:50%;background:${GOLD};border:3px solid ${BG};box-shadow:0 0 0 1px ${GOLD}}
+.wl-app .track .hr{position:absolute;top:26px;font:10px ${MONO};color:${DIM};transform:translateX(-50%);white-space:nowrap}
+.wl-app .rng{display:flex;gap:2px;background:${PANEL};border:1px solid ${LINE};border-radius:8px;padding:2px}
+.wl-app .rng button{padding:3px 8px;border-radius:6px;color:${LAB};font-size:11.5px}
+.wl-app .rng button.on{background:${PANEL2};color:${INK}}
+.wl-app .rbar .rt{font:12px ${MONO};color:${INK};white-space:nowrap;min-width:150px;text-align:left}
+.wl-app .scrim{position:absolute;inset:0;background:${MIX(BG, 55)};z-index:70;display:none;align-items:flex-start;justify-content:center;padding-top:10vh}
+.wl-app .scrim.on{display:flex;animation:wl-fade .14s}
+@keyframes wl-fade{from{opacity:0}}
+.wl-app .pal,.wl-app .help,.wl-app .dlg{background:${PANEL};border:1px solid ${LINE2};border-radius:14px;box-shadow:0 30px 80px ${SHADOW};animation:wl-pop .16s ${EASE}}
+@keyframes wl-pop{from{transform:scale(.97);opacity:0}}
+.wl-app .pal{width:min(640px,92%);overflow:hidden}
+.wl-app .pal .ctx{margin:12px 14px 0;display:inline-flex;gap:6px;font-size:11.5px;color:${LAB};background:${PANEL2};border-radius:6px;padding:3px 8px}
+.wl-app .pal input{width:100%;background:none;border:0;outline:0;color:${INK};font:inherit;font-size:16px;padding:12px 16px 14px;border-bottom:1px solid ${LINE}}
+.wl-app .pres{max-height:52vh;overflow:auto;padding:6px}
+.wl-app .pg{padding:8px 10px 4px;font-size:11px;color:${DIM};letter-spacing:.06em;text-transform:uppercase}
+.wl-app .pi{display:grid;grid-template-columns:18px 1fr auto;gap:10px;align-items:center;padding:8px 10px;border-radius:8px;width:100%;text-align:left}
+.wl-app .pi.on{background:${PANEL2}}
+.wl-app .pi .s{color:${DIM};font-size:12px;margin-left:8px}
+.wl-app .help{width:min(560px,92%);padding:18px 22px;display:grid;grid-template-columns:1fr 1fr;gap:6px 28px}
+.wl-app .help h3,.wl-app .dlg h3{grid-column:1 / -1;margin:0 0 8px;font:700 20px ${HEAD}}
+.wl-app .help div{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;color:${LAB};padding:3px 0}
+.wl-app .dlg{width:min(620px,92%);padding:18px 22px;max-height:80vh;overflow:auto}
+.wl-app .dlg .dsub{margin:-4px 0 10px;font-size:13px;font-weight:600;color:${INK}}
+.wl-app .dlg p{margin:0 0 10px;color:${LAB}}
+.wl-app .dlg .sub{color:${DIM};font-size:12px;margin:8px 0}
+.wl-app .dlg .limrow{display:flex;align-items:center;gap:10px;font-weight:600}
+.wl-app .dlg .lim{width:90px;background:${BG};border:1px solid ${LINE2};border-radius:8px;color:${INK};font:inherit;padding:5px 8px}
+.wl-app .dlg .steps{margin:4px 0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:12.5px}
+.wl-app .dlg .steps li{display:grid;grid-template-columns:1fr auto;gap:2px 10px}
+.wl-app .dlg .steps b{font-size:11px;color:${DIM}}
+.wl-app .dlg .steps [data-state="done"] b{color:${GREEN}}
+.wl-app .dlg .steps [data-state="failed"] b,.wl-app .dlg .steps code{color:${RED}}
+.wl-app .dlg .steps code{grid-column:1 / -1;font:11px ${MONO}}
+.wl-app .wl-toasts{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none}
+.wl-app .toast{pointer-events:auto;display:flex;align-items:center;gap:14px;background:${PANEL2};border:1px solid ${LINE2};border-radius:11px;padding:9px 10px 9px 14px;box-shadow:0 14px 40px ${SHADOW};font-size:12.5px;animation:wl-tin .3s ${EASE};max-width:560px}
+.wl-app .toast.bad{border-color:${MIX(RED, 45, BG)}}
+.wl-app .toast .btn{padding:4px 9px}
+.wl-app .redt{color:${RED}}
+@keyframes wl-tin{from{opacity:0;transform:translateY(12px)}}
+.wl-app .badge{display:inline-flex;align-items:center;gap:7px;margin:6px 0 2px;padding:4px 10px 4px 8px;border-radius:99px;font-size:12px;font-weight:650;color:${PINK};background:${MIX(RED, 13)};border:1px solid ${MIX(RED, 33)}}
+.wl-app .badge i{width:7px;height:7px;border-radius:50%;background:${RED};animation:wl-pulse 1.8s ${EASE} infinite}
+.wl-app .badge.usage_limit,.wl-app .badge.time_limit{color:${MIX(GOLD, 50, INK)};background:${MIX(GOLD, 13)};border-color:${MIX(GOLD, 33)}}
+.wl-app .badge.usage_limit i,.wl-app .badge.time_limit i{background:${GOLD}}
+.wl-app .badge.asks_you,.wl-app .badge.review{color:${MIX(BLUE, 45, INK)};background:${MIX(BLUE, 13)};border-color:${MIX(BLUE, 35)}}
+.wl-app .badge.asks_you i,.wl-app .badge.review i{background:${BLUE}}
+@keyframes wl-pulse{70%{box-shadow:0 0 0 7px transparent}}
+.wl-app .story{margin:14px 0 6px;padding:18px;border-radius:14px;background:linear-gradient(160deg,${MIX(RED, 10, BG)},${PANEL} 60%);border:1px solid ${MIX(RED, 25)}}
+.wl-app .shead{font-family:${HEAD};font-size:24px;line-height:1.15;letter-spacing:.01em}
+.wl-app .sask{margin-top:6px;font-size:12.5px;color:${DIM}}
+.wl-app .swhy{margin:10px 0 14px;font-size:13.5px;line-height:1.5;color:${LAB}}
+.wl-app .quote{margin:0 0 12px;padding:10px 12px;border-left:3px solid ${BLUE};background:${MIX(BLUE, 7)};border-radius:6px;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.wl-app .quote .qh{font-size:11px;color:${DIM};text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+.wl-app .hint{display:flex;flex-direction:column;gap:2px;margin-top:8px;font-size:11.5px;color:${DIM}}
+.wl-app .hint b{color:${LAB};font-weight:600}
+.wl-app .tlbox{margin-top:16px;padding-top:12px;border-top:1px solid ${LINE}}
+.wl-app .tlh{display:flex;justify-content:space-between;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:${DIM}}
+.wl-app .tline{position:relative;height:30px;margin:8px 0 4px}
+.wl-app .tline .trail{position:absolute;left:2%;right:2%;top:14px;height:2px;background:linear-gradient(90deg,${LINE2},${MIX(RED, 40)})}
+.wl-app .tdot{position:absolute;top:8px;width:14px;height:14px;margin-left:-7px;border-radius:50%;border:2px solid ${BG};cursor:pointer;padding:0;transition:transform .2s ${EASE}}
+.wl-app .tdot:hover,.wl-app .tdot:focus,.wl-app .tdot.on{transform:scale(1.45);outline:none}
+.wl-app .tdot.plain{background:${DIM}}
+.wl-app .tdot.work{background:${GOLD}}
+.wl-app .tdot.warn{background:${GOLD};box-shadow:0 0 0 3px ${MIX(GOLD, 20)}}
+.wl-app .tdot.bad{background:${RED};box-shadow:0 0 0 3px ${MIX(RED, 20)}}
+.wl-app .tdot.good{background:${GREEN}}
+.wl-app .tdot.you{background:${BLUE}}
+.wl-app .tltip{min-height:38px;font-size:13px;line-height:1.45;color:${INK}}
+.wl-app .tltip b{color:${DIM};font-weight:600;margin-right:8px}
+.wl-app .tltip code{display:block;margin-top:4px;font-family:${MONO};font-size:11px;color:${DIM};white-space:pre-wrap;word-break:break-word}
+.wl-app details.tech{margin-top:14px}
+.wl-app details.tech summary{cursor:pointer;font-size:12px;color:${DIM};padding:6px 0}
+.wl-app .loop{margin:12px 0 4px;padding:12px 14px;border-radius:12px;background:${PANEL};border:1px solid ${LINE2}}
+.wl-app .lph{display:flex;justify-content:space-between;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:${DIM};margin-bottom:8px}
+.wl-app .lpr{display:flex;align-items:center;gap:4px;padding:4px 0;flex-wrap:wrap}
+.wl-app .lpk{width:22px;font-size:11.5px;color:${GOLD};font-weight:700}
+.wl-app .lpl{display:flex;gap:3px;padding:2px;border:1px dashed ${LINE2};border-radius:8px;flex-wrap:wrap}
+.wl-app .lpn{font-size:11.5px;padding:3px 7px;border-radius:7px;border:1px solid ${LINE2};background:${PANEL2};color:${INK};white-space:nowrap}
+.wl-app .lpn.ok::before,.wl-app .lpn.bad::before,.wl-app .lpn.working::before,.wl-app .lpn.needs::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:1px;background:${GREEN}}
+.wl-app .lpn.ok{border-color:${MIX(GREEN, 35)}}
+.wl-app .lpn.bad{border-color:${RED};background:${MIX(RED, 12)};color:${PINK}}
+.wl-app .lpn.bad::before{background:${RED}}
+.wl-app .lpn.working{border-color:${GOLD}}
+.wl-app .lpn.working::before{background:${GOLD};animation:wl-pulse 1.8s infinite}
+.wl-app .lpn.needs{border-color:${RED}}
+.wl-app .lpn.needs::before{background:${RED}}
+.wl-app .lpn.queued,.wl-app .lpn.absent,.wl-app .lpn.gone{color:${DIM};border-style:dashed}
+.wl-app .lpn.me{outline:2px solid ${GOLD};outline-offset:1px}
+.wl-app .lpa{width:8px;height:2px;background:${LINE2};flex:none}
+.wl-app .lpb{display:flex;gap:8px;margin:2px 0 6px 28px;font-size:12px;line-height:1.4;color:${PINK}}
+.wl-app .lpb b{color:${RED}}
+.wl-app .lpc{color:${RED};font-size:15px;line-height:1}
+.wl-app .rline{display:flex;gap:6px;align-items:center;margin:3px 0 2px;font-size:12px;color:${PINK}}
+.wl-app .rline span{color:${RED};font-size:14px}
+.wl-app .cans{margin:8px 0 2px;padding:8px 10px;border-radius:8px;background:${MIX(GREEN, 9)};border:1px solid ${MIX(GREEN, 28)};font-size:12.5px;line-height:1.45;color:${MINT};animation:wl-enter .35s ${EASE}}
+.wl-app .cans.bad{background:${MIX(RED, 9)};border-color:${MIX(RED, 35)};color:${PINK}}
+.wl-app .chint,.wl-app .cwarn{font-size:11.5px;color:${DIM};margin:4px 0}
+.wl-app .cwarn{color:${PINK}}
+.wl-app .res{display:flex;gap:7px;align-items:baseline;margin:5px 0 2px;font-size:13px;line-height:1.4}
+.wl-app .res span{font-weight:700}
+.wl-app .res.ok{color:${MINT}}
+.wl-app .res.ok span{color:${GREEN}}
+.wl-app .res.back{color:${PINK}}
+.wl-app .res.back span{color:${RED}}
+.wl-app .res.big{font-size:15px;margin:12px 0 4px}
+@media (prefers-reduced-motion: reduce){.wl-app *,.wl-app *::before,.wl-app *::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}}
+`
+
+function h(type, props, ...kids) {
+  const { key, ...rest } = props || {}
+  if (!kids.length) return jsx(type, rest, key)
+  if (kids.length === 1) return jsx(type, { ...rest, children: kids[0] }, key)
+  return jsxs(type, { ...rest, children: kids }, key)
+}
+
+function Page() {
+  const t = usePluginI18n(ID)
+  const tRef = useRef(t)
+  tRef.current = t
+  const mount = useRef(null)
+  useEffect(() => {
+    if (!mount.current) return undefined
+    const app = createApp(mount.current, {
+      t: (key, ...args) => tRef.current(key, ...args),
+      rest: typeof ctxRef?.rest === 'function' ? path => ctxRef.rest(path) : null,
+      navigate: path => host?.navigate?.(path)
+    })
+    return () => app.destroy()
+  }, [])
+  return h('div', { className: 'wl-host' }, h('style', null, STYLE), h('div', { ref: mount, className: 'wl-mount' }))
 }
 
 function navLabel() {

@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException
 router = APIRouter()
 log = logging.getLogger(__name__)
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 DEFAULT_BOARD = "default"
 WORK_PREFIX = "work kanban task "
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9\-_]{0,63}$")
@@ -38,6 +38,11 @@ _QUEUED = ("todo", "ready", "triage")
 _SESSION_COLUMNS = ("id", "parent_session_id", "started_at", "estimated_cost_usd", "actual_cost_usd",
                     "cost_status", "last_activity_at", "last_activity_description")
 _LINKS: dict[str, tuple[tuple, dict[str, list[str]]]] = {}
+_ROUND = re.compile(r"^r\d+$")
+_LENSES = ("build", "security", "ux", "ui", "code", "gate", "flake")
+_LEAD = re.compile(r"^(STATUS:\s*\w+\.?\s*|Status \w+\.?\s*\|?\s*|Fix card \w+ done:\s*|VERDICT:\s*)")
+_STORY_STATUSES = ("blocked", "review")
+_QUIET = 900
 
 _TEXT = {
     "time_limit": "Stopped by the time limit after {dur}; retries used {retries}",
@@ -475,6 +480,282 @@ def build_overview(board: Optional[str] = None, now: Optional[float] = None) -> 
     return {"board": slug, "boards": boards, "now": now, "tasks": out_tasks, "totals": totals, "errors": errors}
 
 
+def _pipe(title: str) -> str:
+    words = str(title or "").split()
+    if len(words) > 1 and _ROUND.match(words[1]):
+        return f"{words[0]} {words[1]}"
+    return words[0].rstrip(":") if words else ""
+
+
+def _step(title: str, pipe: str) -> str:
+    rest = str(title or "")[len(pipe):].strip(" :")
+    return (rest.split(":")[0].strip() or rest) or str(title or "")
+
+
+def _clip(text, n: int, lead: bool = False) -> str:
+    out = " ".join(plain(text).split())
+    out = out if lead else _LEAD.sub("", out)
+    return out[:n] + ("…" if len(out) > n else "")
+
+
+def _sentence(text, n: int = 200) -> str:
+    out = _LEAD.sub("", plain(text))
+    m = re.match(r"(.{20,}?[.;])(\s|$)", out)
+    out = m.group(1) if m else out
+    return out[:n] + ("…" if len(out) > n else "")
+
+
+def _asked(body) -> str:
+    for line in str(body or "").splitlines():
+        line = line.strip()
+        if not line or line.count("|") >= 2 or re.match(r"^[A-Z][\w ]{0,20}:\s*\S+$", line):
+            continue
+        line = re.sub(r"^ROLE:\s*[^.]*\.\s*", "", line)
+        m = re.match(r"(.{12,220}?[.!?])(\s|$)", line)
+        return plain(m.group(1) if m else line[:220])
+    return ""
+
+
+def _classify(text: str) -> tuple[str, str]:
+    t = plain(text)
+    m = re.search(r"Limit resets at (\d\d:\d\d)", t)
+    if m:
+        return "usage_limit", m.group(1)
+    m = re.search(r"Unknown skill\(s\):\s*([\w:.\-]+)", t)
+    if m:
+        return "missing_skill", m.group(1)
+    if "not alive" in t:
+        return "died", ""
+    return "error", ""
+
+
+def _payload(raw) -> dict:
+    try:
+        data = json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _reset_at(clock: str, ref: float) -> Optional[float]:
+    try:
+        hh, mm = map(int, clock.split(":"))
+        lt = time.localtime(ref)
+        return time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hh, mm, 0, 0, 0, -1))
+    except (ValueError, OverflowError):
+        return None
+
+
+def story(task: dict, events: list[dict], runs: list[dict], titles: dict, kids: int, now: float) -> dict:
+    tl: list[dict] = []
+
+    def add(ts, tone, kind, *args, quote=""):
+        if isinstance(ts, (int, float)):
+            tl.append({"ts": ts, "tone": tone, "k": kind, "a": list(args), "q": quote})
+
+    tries, crashes, gave_up, reset, waited, quiet = 0, [], None, None, set(), set()
+    by_run = {r.get("id"): r for r in runs}
+    for e in events:
+        kind, ts, p = e.get("kind"), e.get("created_at"), _payload(e.get("payload"))
+        run = by_run.get(e.get("run_id")) or {}
+        lasted = (run.get("ended_at") or ts or 0) - (run.get("started_at") or ts or 0)
+        if kind == "created":
+            add(ts, "plain", "createdYou" if task.get("created_by") == "user" else "createdTask")
+        elif kind == "dependency_wait":
+            parent = titles.get(p.get("parent"))
+            if parent and parent not in waited:
+                waited.add(parent)
+                add(ts, "plain", "waitFor", parent)
+        elif kind == "promoted":
+            add(ts, "plain", "ready")
+        elif kind == "spawned":
+            tries += 1
+            add(ts, "work", "started") if tries == 1 else add(ts, "work", "restarted", tries)
+        elif kind == "rate_limited":
+            add(ts, "warn", "rateLimited", lasted)
+        elif kind == "reclaim_deferred" and "heartbeat_stale" in str(p.get("reason") or "") and e.get("run_id") not in quiet:
+            quiet.add(e.get("run_id"))
+            add(ts, "warn", "quiet")
+        elif kind == "crashed":
+            out = plain(p.get("worker_output"))
+            cause, arg = _classify(out)
+            crashes.append(cause)
+            if cause == "usage_limit":
+                reset = arg
+                add(ts, "bad", "crashLimit", lasted, arg, quote=out[-160:])
+            elif cause == "missing_skill":
+                add(ts, "bad", "crashSkill", arg, quote=out[-160:])
+            elif cause == "died":
+                add(ts, "bad", "crashDied", quote=out[-200:])
+            else:
+                add(ts, "bad", "crashError", lasted, quote=out[-200:])
+        elif kind == "timed_out":
+            add(ts, "bad", "timedOut")
+        elif kind == "gave_up":
+            gave_up = p
+            add(ts, "bad", "gaveUp", p.get("effective_limit") or p.get("failures") or 1)
+        elif kind == "blocked":
+            reason = plain(p.get("reason"))
+            if p.get("kind") == "needs_input" or task.get("assignee"):
+                add(ts, "you", "asked", quote=reason)
+        elif kind == "commented":
+            add(ts, "plain", "noteYou" if (p.get("author") or "") in ("", "user", "dashboard", "wingline") else "noteAgent")
+        elif kind == "unblocked":
+            add(ts, "plain", "unblocked")
+        elif kind == "completed":
+            add(ts, "good", "finished", quote=_sentence(p.get("summary"), 260))
+        elif kind == "archived":
+            add(ts, "plain", "removed")
+    for r in runs:
+        beat, ended, started = r.get("last_heartbeat_at"), r.get("ended_at"), r.get("started_at")
+        if r.get("outcome") in ("crashed", "timed_out") and beat and ended and ended - beat > _QUIET and started:
+            add(beat, "warn", "lastLife", beat - started, ended - beat)
+        limit = r.get("max_runtime_seconds")
+        if limit and started and (ended or now) - started > limit:
+            add(started + limit, "warn", "limitRan", limit)
+    tl.sort(key=lambda x: x["ts"])
+    last = runs[-1] if runs else {}
+    facts: dict = {"kids": kids}
+    cause = ""
+    if task.get("status") == "blocked" and (gave_up or last.get("outcome") == "timed_out"):
+        beat, ended = last.get("last_heartbeat_at"), last.get("ended_at")
+        silent = bool(beat and ended and ended - beat > _QUIET)
+        allowed = (gave_up or {}).get("effective_limit") or 1
+        if "usage_limit" in crashes:
+            cause = "usage_limit"
+            reset_ts = _reset_at(reset, ended or now) if reset else None
+            facts.update(worked=sum((r.get("ended_at") or now) - (r.get("started_at") or now)
+                                    for r in runs if r.get("outcome") == "rate_limited"),
+                         tries=crashes.count("usage_limit"), reset=reset, resetPassed=bool(reset_ts and now >= reset_ts))
+        elif last.get("outcome") == "timed_out":
+            cause = "time_limit"
+            facts.update(limit=last.get("max_runtime_seconds") or task.get("max_runtime_seconds"),
+                         worked=(ended or now) - (last.get("started_at") or now))
+        elif silent:
+            cause = "silent"
+            facts.update(into=beat - (last.get("started_at") or beat), lastLife=beat, silentFor=ended - beat, allowed=allowed)
+        elif "missing_skill" in crashes:
+            cause = "missing_skill"
+        else:
+            cause = "error"
+            facts.update(allowed=allowed)
+    elif task.get("status") == "blocked":
+        cause = "asks_you"
+    elif task.get("status") == "review":
+        cause = "review"
+    question = next((x["q"] for x in reversed(tl) if x["tone"] == "you"), "") or plain(task.get("block_reason"))
+    return {"cause": cause, "facts": facts, "asked": _asked(task.get("body")), "question": question,
+            "tl": [{**x, "q": x["q"][-200:]} for x in tl]}
+
+
+def _story_events(path: Path, ids: list[str], errors: list, label: str) -> dict[str, list[dict]]:
+    out: dict[str, list[dict]] = {}
+    if not ids:
+        return out
+    try:
+        with closing(_ro(path)) as conn:
+            marks = ",".join("?" * len(ids))
+            for r in conn.execute(f"select * from task_events where task_id in ({marks}) and kind != 'heartbeat' "
+                                  "order by id", ids):
+                out.setdefault(r["task_id"], []).append(dict(r))
+    except Exception as exc:
+        _err(errors, f"{label} task_events", exc)
+    return out
+
+
+def _stats(tasks: list[dict]) -> dict:
+    took: dict[str, list[float]] = {}
+    spent: dict[str, list[float]] = {}
+    for t in tasks:
+        for r in t["runs"]:
+            if r["e"] and r["o"] == "completed":
+                took.setdefault(t["role"], []).append(r["e"] - r["s"])
+        if t["status"] == "done" and t["usd"]:
+            spent.setdefault(t["role"], []).append(t["usd"])
+
+    def q(values, p):
+        values = sorted(values)
+        return values[int((len(values) - 1) * p)]
+
+    return {k: {"n": len(v), "p25": q(v, .25), "p50": q(v, .5), "p75": q(v, .75), "p90": q(v, .9),
+                "usd": round(q(spent.get(k) or [0], .5), 2)} for k, v in took.items()}
+
+
+def _labels(tasks: list[dict]) -> None:
+    groups: dict[tuple, list[dict]] = {}
+    for t in tasks:
+        groups.setdefault((t["board"], t["pipe"]), []).append(t)
+    for grp in groups.values():
+        grp.sort(key=lambda x: (x["created"] or 0, x["id"]))
+
+        def desc(x):
+            rest = x["title"][len(x["pipe"]):].strip(" :")
+            if ":" in rest and x["step"] not in _LENSES:
+                d = rest.split(":", 1)[1].strip()
+                return d[:1].upper() + d[1:]
+            return None
+
+        codes = {x["step"]: desc(x) for x in grp if desc(x)}
+        for i, x in enumerate(grp):
+            x["lens"] = x["step"] if x["step"] in _LENSES else None
+            x["label"], x["labelKind"] = (desc(x) or x["step"])[:90], None
+            m = re.match(r"(.+?)\s+(review|continued)$", x["step"])
+            if not x["lens"] and not desc(x) and m and codes.get(m.group(1)):
+                x["label"], x["labelKind"] = codes[m.group(1)][:90], m.group(2)
+            x["idx"], x["of"] = i + 1, len(grp)
+
+
+def build_app(now: Optional[float] = None) -> dict:
+    errors: list[dict] = []
+    now = time.time() if now is None else now
+    kroot, root = _kanban_root(), _root()
+    stores = _read_sessions(root, errors)
+    boards, out = [], []
+    for b in _list_boards(errors):
+        slug = b["slug"]
+        db = _board_db(slug)
+        label = _label(db, kroot)
+        if slug == DEFAULT_BOARD and not db.is_file():
+            continue
+        tasks, links, runs, comments, events = _read_board(db, label, errors)
+        titles = {t["id"]: t.get("title") or "" for t in tasks}
+        need = [t["id"] for t in tasks if t.get("status") in _STORY_STATUSES]
+        evs = _story_events(db, need, errors, label)
+        last = 0.0
+        for t in tasks:
+            tid, status = t["id"], t.get("status")
+            task_runs = runs.get(tid, [])
+            sessions = _task_sessions(tid, stores)
+            spent = cost(sessions)
+            pipe = _pipe(t.get("title"))
+            row = {
+                "id": tid, "board": slug, "title": t.get("title") or "", "pipe": pipe,
+                "step": _step(t.get("title"), pipe), "role": role(t.get("title")), "status": status,
+                "assignee": t.get("assignee"), "created": t.get("created_at"), "done": t.get("completed_at"),
+                "maxrt": t.get("max_runtime_seconds"), "retries": t.get("max_retries"),
+                "reason": block_reason(t, task_runs, events.get(tid)) or "",
+                "parents": links["parents"].get(tid, []), "children": links["children"].get(tid, []),
+                "runs": [{"s": r.get("started_at"), "e": r.get("ended_at"), "o": r.get("outcome"),
+                          "sum": _clip(r.get("summary"), 420, lead=True), "err": _clip(r.get("error"), 200)} for r in task_runs],
+                "usd": round(spent["usd"], 2), "usdKind": spent["status"],
+                "act": _activity(sessions) if status == "running" else None,
+                "comments": comments.get(tid, 0),
+            }
+            last_sum = next((r["sum"] for r in reversed(row["runs"]) if len(r["sum"]) > 20), "")
+            row["outcome"] = re.split(r"(?<=[.;])\s", _LEAD.sub("", last_sum))[0][:170] if last_sum else ""
+            if status in _STORY_STATUSES:
+                row["story"] = story(t, evs.get(tid, []), task_runs, titles, len(row["children"]), now)
+            for v in (t.get("created_at"), t.get("completed_at"), *(r.get("ended_at") or r.get("started_at") for r in task_runs)):
+                if isinstance(v, (int, float)) and v > last:
+                    last = v
+            out.append(row)
+        if tasks:
+            boards.append({"slug": slug, "name": b.get("name") or slug, "last": last or None})
+    _labels(out)
+    boards.sort(key=lambda b: -(b["last"] or 0))
+    return {"now": now, "boards": boards, "tasks": out, "stats": _stats(out), "errors": errors}
+
+
 @router.get("/health")
 def health() -> dict:
     return {"ok": True, "version": VERSION}
@@ -483,6 +764,11 @@ def health() -> dict:
 @router.get("/overview")
 def overview(board: Optional[str] = None) -> dict:
     return build_overview(board)
+
+
+@router.get("/app")
+def app_data() -> dict:
+    return build_app()
 
 
 def _selftest() -> int:
@@ -633,6 +919,30 @@ def _selftest() -> int:
         def snapshot():
             return {p.relative_to(home).as_posix(): p.read_bytes() for p in home.rglob("*") if p.is_file()}
 
+        before = snapshot()
+        app = build_app(now=1000.0)
+        ok(snapshot() == before, "build_app creates or changes no file in the home")
+        ok([b["slug"] for b in app["boards"]] == [slug], f"only boards with tasks are listed: {app['boards']}")
+        ab = {t["id"]: t for t in app["tasks"]}
+        ok(len(ab) == 10 and all(t["board"] == slug for t in app["tasks"]), "every task, tagged with its board")
+        ok((ab["t_ui"]["pipe"], ab["t_ui"]["step"], ab["t_ui"]["lens"]) == ("ui-polish-1140 r1", "ui", "ui"),
+           f"round pipeline and lens: {ab['t_ui']['pipe']!r} {ab['t_ui']['step']!r}")
+        ok(ab["t_build"]["pipe"] == "ui-polish-1140" and ab["t_build"]["lens"] == "build", "pipeline without a round")
+        ok(ab["t_time"]["story"]["cause"] == "time_limit" and ab["t_time"]["story"]["facts"]["limit"] == 18000,
+           f"timed-out block -> time_limit: {ab['t_time'].get('story')}")
+        ok(ab["t_flake"]["story"]["cause"] == "error" and ab["t_flake"]["story"]["facts"]["allowed"] == 1,
+           f"gave up after a crash -> error: {ab['t_flake'].get('story')}")
+        ok({e["k"] for e in ab["t_flake"]["story"]["tl"]} == {"gaveUp", "limitRan"},
+           f"timeline from events (gave up) and runs (ran past its limit): {ab['t_flake']['story']['tl']}")
+        ok(ab["t_gate"]["story"]["cause"] == "asks_you" and ab["t_gate"]["story"]["question"] == "merge-ready: say yes",
+           f"needs-input block -> asks_you with the question: {ab['t_gate'].get('story')}")
+        ok("story" not in ab["t_build"] and "story" not in ab["t_run"], "no story for a healthy task")
+        ok(ab["t_build"]["runs"][0]["sum"] == "built it" and ab["t_run"]["act"] == {"text": "running tests", "at": 900},
+           "runs and live activity carried")
+        ok(app["stats"].get("builder", {}).get("n") == 1 and app["stats"]["builder"]["p50"] == 90,
+           f"typical time from finished runs: {app['stats']}")
+        ok(json.loads(json.dumps(app)) == app, "build_app is JSON serialisable")
+        ok(any(getattr(r, "path", "") == "/app" for r in router.routes), "GET /app is routed")
         before = snapshot()
         data = build_overview(None, now=1000.0)
         ok(snapshot() == before, "no file in the home was created or changed by the read")

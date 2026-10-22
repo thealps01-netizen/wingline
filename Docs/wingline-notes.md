@@ -112,3 +112,29 @@ snapshot while the blocked task was still accruing — unverified).
   are shared across profiles, so this reaches the same board data.
 - **Ask in chat** inserts into the focused chat's composer (`host.composer.insertText`); if that
   fails it copies the prompt and says so.
+
+## 0.2.0
+
+- **One read for every board** (`/app`): the sidebar shows every board's count and the Inbox spans
+  boards, so the page reads them all at once. Measured on the real home: 7 boards, 193 tasks,
+  ~195 KB, 120–190 ms per read; polled every 5 s.
+- **Sentences live in the page, facts in the backend.** `story()` returns a cause key, numbers and
+  timeline keys; the English text is in the `en` bundle. Agent text is quoted ("in its own words")
+  and never rewritten. Run summaries keep their lead words (`VERDICT: CHANGES …`) because the loop
+  box reads them; only the display copy (`outcome`) drops them.
+- **Run again = `PATCH status ready`**: on a blocked task Hermes' Kanban API routes it to
+  `kanban_db.unblock_task`, the same call Hermes' own drawer makes for "Unblock task". A note is a
+  comment written first, so the next worker reads it. Tell the agent is the same comment without a
+  status change: Hermes passes new comments to a running worker at its next step. Delivery to a live
+  worker was not measured (it needs a real, paid run).
+- **Remove waits 8 s before sending.** Hermes can move an archived task back (`PATCH status todo`),
+  but only to the queue, not to the blocked state it had, so an Undo after sending would not restore
+  the card. Undo is honest only while nothing has been sent. Leaving the page sends a pending removal
+  at once rather than dropping it.
+- **Optimistic cards give way to the next read** once Hermes has answered (`sent`), so a card never
+  stays in Queued when Hermes kept it blocked.
+- **The header class is `.tbar`, not `.top`**: the app's stylesheet styles a bare `.top` (a 3 px
+  scrollbar shadow), which leaked into the header. Every other Wingline class was checked against the
+  compiled stylesheet; none collides.
+- **Screenshots come from a visible off-screen window.** A hidden Electron window does not advance
+  compositor animations, so the drawer and card moves were photographed at their first frame.

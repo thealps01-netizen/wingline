@@ -1,8 +1,8 @@
-# Wingline — build contract (v0.1.0)
+# Wingline — build contract (v0.2.0)
 
-Wingline is a Hermes Desktop plugin: a human-side view of Hermes Kanban boards. Two views of the
-same data — **Board** (default) and **Factory** (a production-line picture) — and a small set of
-actions that go through Hermes' own Kanban API. Hermes core is never edited.
+Wingline is a Hermes Desktop plugin: a human-side view of Hermes Kanban boards. Board, List and
+Inbox views of every board, a drawer that tells each task's story in plain sentences, and a small
+set of actions that go through Hermes' own Kanban API. Hermes core is never edited.
 
 Owner: Muhammed Enes Alpler (MIT). Plugin id/name: `wingline`. Route: `/wingline`.
 Package layout follows the sibling plugin `agent-station` (installed at
@@ -60,10 +60,47 @@ Rules:
   `spend_usd`, which sums every task's cost.
 - `block_reason_plain`: built from data, e.g. timed-out run (outcome/error mentions max runtime) →
   "Stopped by the time limit after <dur>; retries used <n>/<max>". Unknown → error_plain first line.
-- `GET /api/plugins/wingline/health` → `{"ok": true, "version": "0.1.0"}`.
+- `GET /api/plugins/wingline/health` → `{"ok": true, "version": "0.2.0"}`.
 - `python dashboard/plugin_api.py --selftest` builds a temp HERMES_HOME with a fake board +
   state.db (incl. an ANSI error, a `ui-polish-1140 build` title, a child session) and asserts
-  every rule above.
+  every rule above and in section 1b.
+
+## 1b. Backend — `GET /api/plugins/wingline/app` (what the page reads)
+
+Every board at once, read-only like `/overview`; boards without tasks are left out.
+
+```jsonc
+{
+  "now": 1792446113.1,
+  "boards": [{"slug": "...", "name": "...", "last": 1792440000}],   // most recent activity first
+  "tasks": [{
+    "id": "t_...", "board": "<slug>", "title": "...", "status": "blocked",
+    "pipe": "app-layout r2",            // first title word (+ " rN" when the second word is a round)
+    "step": "build", "lens": "build|security|ux|ui|code|gate|flake|null",
+    "label": "...", "labelKind": "review|continued|null", "idx": 1, "of": 6,
+    "role": "builder|review|gate|detective", "assignee": "...", "created": 0, "done": 0,
+    "maxrt": 18000, "retries": 1, "reason": "<block_reason_plain>",
+    "parents": [], "children": [],
+    "runs": [{"s": 0, "e": 0, "o": "<outcome>", "sum": "<summary, agent's words>", "err": "..."}],
+    "usd": 6.13, "usdKind": "estimated|actual|mixed|none", "act": {"text": "...", "at": 0} | null,
+    "comments": 3, "outcome": "<first sentence of the last summary>",
+    "story": {                         // only for blocked / review tasks
+      "cause": "usage_limit|silent|time_limit|missing_skill|error|asks_you|review",
+      "facts": {"kids": 1, ...},       // numbers the sentences are built from
+      "asked": "<first sentence of the task body>", "question": "<the agent's question>",
+      "tl": [{"ts": 0, "tone": "plain|work|warn|bad|good|you", "k": "<event key>", "a": [], "q": "<quote>"}]
+    }
+  }],
+  "stats": {"builder": {"n": 43, "p25": 0, "p50": 0, "p75": 0, "p90": 0, "usd": 0}},
+  "errors": [{"source": "...", "message": "..."}]
+}
+```
+
+- **cause** comes from what Hermes recorded: `timed_out` run → time_limit; "Limit resets at" in a
+  crash → usage_limit; a gave-up task whose last heartbeat is more than 15 min before the end →
+  silent; "Unknown skill(s)" → missing_skill; other gave-up / timed-out → error; any other block →
+  asks_you; status `review` → review. A crashed run that ran past its limit is not a time-out.
+- The page turns `cause` + `facts` + `tl[].k` into English sentences; agent text is only quoted.
 
 ## 2. Desktop — `desktop/plugin.js`
 
@@ -72,47 +109,48 @@ agent-station's `desktop/plugin.js` (read its `register(ctx)` and how it fetches
 Registers a `routes` page `/wingline` and a `sidebar.nav` row (no `panes`). One nested `en` i18n
 bundle, prefix `wingline.`.
 
-Polls `/overview` every 5 s while the page is visible (pause when hidden). Board switcher.
-Header counters: Needs you / Working / Queued / Done / Spend. A **Board | Factory** segmented
-switch (persist choice in `ctx.storage`).
+Polls `/app` every 5 s while the page is visible (pause when hidden); a changed answer re-renders,
+an unchanged one only refreshes live text (activity line, cost, clocks). While the user types, drags,
+replays or has a dialog open, the re-render waits. Plain DOM inside one React mount (`el()` helper,
+no `innerHTML`); styles under `.wl-app` use only the app's `--ui-*` variables.
 
-**Board** (port of the approved prototype `hub/template.html`):
-- "Needs you" strip first: each blocked task with plain reason, retries, time spent, actions.
-- Working now: live activity line per running task.
-- Pipeline map (parents → children) and timeline where only IDLE gaps are compressed
-  (`GAP` 6 min); run bars keep real length.
-- Task detail drawer: fields, runs, cost (with its status word), comments count, actions.
+**Layout** (port of the approved prototype): sidebar (decision count, boards with a status strip,
+live agents), header (board name, Board | List | Inbox, filter, clock, Replay), four columns.
+Review siblings with the same parents stack into one card; finished pipelines fold into one card with
+`pipeResult` (merged / sent back and why / N of M steps). Cards show one badge or one result
+sentence; a round > 1 shows why the previous round went back. Hover draws dependency arrows.
 
-**Factory** (port of `games/factory/template.html`): belts between machines (queue → build →
-review → gate → shipped), packages = tasks, jammed machine + smoke + red "Needs you" bin for blocked,
-Now + Replay (1×/4×/16×), click package/machine → same detail drawer. Colours from the app theme's
-`--ui-*` variables (agent-station shows which exist) — never the chat-widget `--foreground` etc.
-Respect `prefers-reduced-motion`.
+**Drawer**: headline + why + what follows (from `story`), timeline dots with the event sentence and
+a quoted agent line, "The loop" for `<name> rN` pipelines (one row per round: Build → four checks →
+your approval, with the reason a round went back), otherwise a step strip. Technical details (task
+id, agent, limits, cost status, typical time, every attempt, worker log) stay folded.
 
-**Actions** — all via Hermes' Kanban REST (`/api/plugins/kanban/...`, `?board=<slug>`), each
-behind a confirm step that states exactly what will change:
-1. **Retry with more time** (blocked tasks): input for the new limit (default 2× the old one,
-   rounded to 30 min). Confirm text lists: new task created with the same title, body, assignee,
-   priority, parents, skills, goal mode, model/provider/reasoning overrides and workspace, limit X;
-   children re-linked to the new task; a comment on the old task naming the new id; the old task
-   archived. Steps: `GET /tasks/{id}` → `POST /tasks` → for each child `POST /links` (new→child) then
-   `DELETE /links?parent_id=old&child_id=c` → `POST /tasks/{old}/comments` → `PATCH /tasks/{old}`
-   `{status:"archived"}`. Stop at the first failure and show which steps already happened.
-   Note in the dialog: Hermes cannot change an existing task's time limit, so a new task is used.
-   `max_retries` is not accepted by `POST /tasks`; say the new task uses the board default.
-2. **Add note**: `POST /tasks/{id}/comments` `{body, author:"wingline"}`.
-3. **Archive**: two-step; says the task stays readable under archived and can be found again.
-4. Read-only: **Open log** (`GET /tasks/{id}/log`, shown in the drawer, ANSI stripped),
-   **Open in Kanban** (navigate to `/kanban`), **Ask in chat** (prefill composer if the SDK offers
-   it; otherwise copy a prompt to clipboard and say so).
+**Actions** — all via Hermes' Kanban REST (`/api/plugins/kanban/...`, `?board=<slug>`):
+1. **Run again** (blocked, not a question): optional note → `POST /tasks/{id}/comments`
+   `{body, author:"wingline"}` first, then `PATCH /tasks/{id}` `{status:"ready"}`. A refused change
+   (status unchanged) reverts the card and says so.
+2. **Reply** (the agent asked): same two calls; an empty answer is not sent.
+3. **Tell the agent** (running): one comment, no status change; warns when the agent has been silent
+   for 15 min.
+4. **Check** (running): no call; answers from the last activity and the role's typical time.
+5. **Run with more time** (time_limit): the 0.1.0 retry — input for the new limit (default 2× the
+   old one, rounded to 30 min), every step listed; `GET /tasks/{id}` → `POST /tasks` → for each
+   child `POST /links` then `DELETE /links?parent_id=old&child_id=c` → `POST /tasks/{old}/comments`
+   → `PATCH /tasks/{old}` `{status:"archived"}`; stop at the first failure and show what happened.
+6. **Remove**: second click arms it, the card leaves, Undo (button or Ctrl+Z) for 8 s; only then
+   `PATCH /tasks/{id}` `{status:"archived"}`. Leaving the page sends a pending removal at once.
+7. Drag a blocked card to Queued = Run again; every other drop explains why it is not allowed.
+8. Read-only: **Open log** (`GET /tasks/{id}/log`, ANSI stripped), **Open in Kanban** (review cards).
 
-Every failed request is shown in the page. Escape all task text (no innerHTML with data).
+Every failed request is shown in a toast; every failed read in the sidebar.
 
 ## 3. Tests and gates
 - `tests/render_check.mjs` (jsdom, recipe: hermes-desktop-plugin-authoring skill
-  `references/jsdom-plugin-test-harness.md`): renders the page from a fixture of the overview JSON,
-  asserts no raw i18n keys, no `panes` registration, both views render, the retry confirm lists all
-  steps, XSS fixture title stays text.
+  `references/jsdom-plugin-test-harness.md`): renders the page from `fixtures/app-real.json` plus
+  edge tasks built in the test, asserts no raw i18n keys, no `panes` registration, the story and
+  loop, the exact Kanban calls of every button, the Undo window, XSS titles stay text.
+- `tests/preview.mjs` + `tests/shot.cjs`: the real plugin in the app's Electron, one scenario per
+  page, screenshots in `tests/shots/`.
 - `tests/audit_static.py`: undefined identifiers, exactly one `en` bundle, every `t()` key present.
 - Production `plugin.js` / `plugin_api.py` carry no comments/docstrings; the why lives in
   `Docs/wingline-notes.md`.
