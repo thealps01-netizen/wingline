@@ -1,0 +1,38 @@
+# Runs the render check from AGENTS.md on both runners. The static audit (tests/audit_static.py)
+# runs ESLint from a Hermes core's node_modules and the backend selftest
+# (dashboard/plugin_api.py --selftest) imports the Hermes core; a runner has no Hermes install,
+# so both stay local.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tests/package-lock.json
+      - name: Install the render check dependencies
+        working-directory: tests
+        run: npm ci
+      - name: Render check (jsdom)
+        working-directory: tests
+        run: node render_check.mjs
