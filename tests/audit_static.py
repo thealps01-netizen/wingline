@@ -15,6 +15,10 @@ Rules
   colors       no hex / rgb() / hsl() literal; every `var(--…)` is an app theme `--ui-*` variable
   kanban       every Kanban call goes through the `/api/plugins/kanban` prefix
   silentCatch  every `catch` logs or surfaces the error
+  dashboard    the web dashboard (`hermes dashboard`) loads dashboard/<entry> (default dist/index.js)
+               for every manifest and lists a tab for it unless `tab.hidden` is true; the page is
+               drawn by the desktop app only, so while no such script ships the manifest hides the
+               tab (a listed tab opens on "Could not load this plugin's script")
   privacy      no shipped file names the author's account or a `<drive>:/Users/<name>` path other
                than the fixture name `someone`
 """
@@ -229,6 +233,16 @@ def check_catches(js: str) -> None:
             report(f"silentCatch: the .catch at line {js[:match.start()].count(chr(10)) + 1} neither logs nor shows the error")
 
 
+def check_dashboard() -> None:
+    dashboard = ROOT / "dashboard"
+    manifest = json.loads((dashboard / "manifest.json").read_text(encoding="utf-8"))
+    entry = manifest.get("entry", "dist/index.js")
+    tab = manifest.get("tab") if isinstance(manifest.get("tab"), dict) else {}
+    if not (isinstance(entry, str) and (dashboard / entry).is_file()) and not tab.get("hidden"):
+        report(f"dashboard: manifest.json shows a web dashboard tab but dashboard/{entry} does not exist — "
+               'the tab would fail to load; set "tab": {"hidden": true} or ship the script')
+
+
 def check_privacy() -> None:
     files = [JS, *sorted((HERE / "fixtures").glob("*.json")), *sorted(p for p in HERE.glob("*.*") if p.suffix in {".mjs", ".cjs", ".py", ".json"})]
     for path in files:
@@ -250,6 +264,7 @@ def main() -> int:
     check_colors(js)
     check_kanban(js)
     check_catches(js)
+    check_dashboard()
     check_privacy()
     for problem in problems:
         print(f"PROBLEM  {problem}")
